@@ -41,9 +41,36 @@ export struct FileFolderView {
           })
         }
         .onClick(() => {
-          const video_list = item.video_list || []
-          this.videoListController.updateData(new VideoDataSource(video_list), item)
+          // 优先检查缓存
+          const cached = this.videoListController.getCachedFolder(item.date)
+          if (cached && cached.video_list.length > 0) {
+            this.videoListController.updateData(undefined, cached)
+            this.sideBarController.close(true)
+            return
+          }
+
+          // 缓存未命中：保持当前列表，延迟加载避免阻塞侧边栏关闭动画
+          this.videoListController.startFolderSwitch({ name: item.name, date: item.date, video_list: [] })
           this.sideBarController.close(true)
+
+          if (item.name) {
+            const targetDate = item.date
+            setTimeout(() => {
+              FileFolderUtil.loadFolderVideosAsync(PathUtils.appContext!, item.name)
+                .then(videos => {
+                  // 竞态保护：加载完成时若用户已切换到其他文件夹，则不更新数据
+                  if (this.videoListController.folder?.date !== targetDate) {
+                    console.info(`[FileFolderView] Folder changed during load, skip updating ${item.name}`)
+                    return
+                  }
+                  const folderWithVideos: FileFolder = { name: item.name, date: item.date, video_list: videos }
+                  this.videoListController.updateData(new VideoDataSource(videos), folderWithVideos)
+                })
+                .catch(e => {
+                  console.error(`[FileFolderView] Failed to load videos for ${item.name}: ${e}`)
+                })
+            }, 0)
+          }
         })
         .bindContextMenu(this.FileFolderSelectMenu(item), ResponseType.LongPress)
         .bindContextMenu(this.FileFolderSelectMenu(item), ResponseType.RightClick)
@@ -77,7 +104,7 @@ export struct FileFolderView {
           await Promise.all(deletePromises)
           this.fileFolderSource.deleteData(this.fileFolderList.findIndex(i => i.date === file_folder.date))
           this.fileFolderList = FileFolderUtil.deleteFileFolder(PathUtils.appContext!, file_folder)
-          this.videoListController.videoDataSource.refreshData(this.videoListController.folder)
+          await this.videoListController.refreshFolderData()
         })
       MenuItem({
         symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.rename')),

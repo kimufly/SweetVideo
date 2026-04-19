@@ -1,6 +1,7 @@
 import { Context } from '@kit.AbilityKit'
 import { VideoMetadata } from '../interfaces/VideoMetadataInterface'
 import { RecentPlayRepository } from '../repository/RecentPlayRepository'
+import { RecentPlayEntity } from '../entity/RecentPlayEntity'
 import { PathUtils } from './PathUtils'
 
 // 最近播放类
@@ -91,10 +92,20 @@ export default class RecentPlayUtil {
   private static async loadData(context: Context): Promise<void> {
     const repo = RecentPlayRepository.getInstance()
     const entities = await repo.findRecent(RecentPlayUtil.MAX_SIZE)
+    // 防御性去重：按 uri 分组，只保留 playedAt 最新的一条
+    const uriMap = new Map<string, RecentPlayEntity>()
+    for (const entity of entities) {
+      const existing: RecentPlayEntity | undefined = uriMap.get(entity.uri)
+      if (!existing || entity.playedAt > existing.playedAt) {
+        uriMap.set(entity.uri, entity)
+      }
+    }
+    const dedupedEntities = Array.from(uriMap.values())
+      .sort((a: RecentPlayEntity, b: RecentPlayEntity): number => b.playedAt.localeCompare(a.playedAt))
     // ORM 改造：将 RecentPlayEntity 按字段映射回 VideoMetadata，缺失字段使用默认值填充
     // 说明：最近播放表不保存 start_time、end_time、subtitle 等播放细节，这些字段在跳转到播放器时
     //       会通过 VideoRepository / PrivacyVideoRepository 重新按 uri 查询补充。
-    RecentPlayUtil.deque = entities.map((entity): VideoMetadata => ({
+    RecentPlayUtil.deque = dedupedEntities.map((entity): VideoMetadata => ({
       uri: entity.uri,
       title: entity.title,
       date: entity.folderDate,

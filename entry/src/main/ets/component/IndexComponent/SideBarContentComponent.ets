@@ -38,7 +38,7 @@ export struct SideBarContentComponent {
   @ObjectLink fileFolderSource: FileFolderDataSource
 
   // === 回调 ===
-  onFolderSelect: (folder: FileFolder) => Promise<void> = async () => {}
+  onFolderSelect: (folder: FileFolder) => void = () => {}
   onImportFromFileManager: () => Promise<void> = async () => {}
   onImportFromAlbum: () => Promise<void> = async () => {}
   onImportFromDownload: () => Promise<void> = async () => {}
@@ -229,7 +229,7 @@ export struct SideBarContentComponent {
           if (this.videoListController.folder?.date === folder.date) {
             return
           }
-          await this.onFolderSelect(folder)
+          this.onFolderSelect(folder)
           this.sideBarController.close(true)
         })
         .bindContextMenu(this.FolderContextMenuBuilder(folder), ResponseType.LongPress)

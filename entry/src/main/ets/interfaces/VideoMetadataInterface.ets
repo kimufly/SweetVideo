@@ -20,6 +20,7 @@ export interface VideoMetadata {
   subtitle_3d_mode?: number
   subtitle_offset_millis?: number
   subtitle_track_id?: number
+  pinyin?: string
 }
 
 // 保存数据

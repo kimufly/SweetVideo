@@ -1,4 +1,4 @@
-import { FileFolderDataSource } from '../utils/DataUtil'
+import { FileFolderDataSource, VideoDataSource } from '../utils/DataUtil'
 import { VideoListController } from '../component/VideoItemComponent/VideoItemComponent'
 import { SideBarController } from '../component/SideBarComponent/SideBar'
 import { VideoView } from '../component/VideoItemComponent/VideoViewComponent'
@@ -24,6 +24,7 @@ import { VideoMetadata } from '../interfaces/VideoMetadataInterface'
 import WantProcessUtil from '../utils/WantProcessUtil'
 import SelectFileUtil from '../utils/SelectFileUtil'
 import { PathUtils } from '../utils/PathUtils'
+import FileFolderUtil from '../utils/FileFolderUtil'
 import VideoOperateUtil from '../utils/VideoOperateUtil'
 import { WindowUtil } from '../utils/WindowUtil'
 import { checkUriProcess } from '../utils/TaskpoolUtil'
@@ -81,9 +82,9 @@ struct Index {
     SelectFileUtil.getDownloadUri()
     VideoOperateUtil.initSetting(PathUtils.appContext!)
 
-    // ORM 改造 + 架构重构：通过 ViewModel 初始化文件夹数据
-    // 旧逻辑直接读取 Preferences.getFileFolder 并创建默认首页；
-    // 新逻辑由 IndexViewModel.initializeFolders 封装，内部通过 FolderRepository 查询/创建。
+    // ORM 改造 + 架构重构 + 启动优化：
+    // 1. 初始化时仅加载文件夹元数据（轻量模式），不加载视频，解决大文件夹启动卡顿
+    // 2. 加载完文件夹后，再异步加载当前文件夹的视频
     this.viewModel = new IndexViewModel(
       PathUtils.appContext!,
       (processed, total) => {
@@ -95,13 +96,24 @@ struct Index {
       }
     )
 
-    // 初始化文件夹
+    // 初始化文件夹（轻量模式）
     this.loading = true
     const folders = await this.viewModel?.initializeFolders() ?? []
-    this.loading = false
     this.file_folder_list = folders
     this.fileFolderSource.updateData(folders)
-    this.videoListController.updateData(undefined, folders[0])
+
+    // 加载第一个文件夹的视频（异步全量加载，不阻塞 UI）
+    if (folders.length > 0 && folders[0].name) {
+      try {
+        const videos = await this.viewModel?.loadFolderVideos(folders[0].name) ?? []
+        const folderWithVideos: FileFolder = { name: folders[0].name, date: folders[0].date, video_list: videos }
+        this.videoListController.updateData(new VideoDataSource(videos), folderWithVideos)
+      } catch (e) {
+        console.error(`[Index] Failed to load initial folder videos: ${e}`)
+        this.videoListController.updateData(undefined, folders[0])
+      }
+    }
+    this.loading = false
 
     // 初始化手势处理器
     this.gestureHandler = new FolderGestureHandler(
@@ -189,9 +201,9 @@ struct Index {
   }
 
   // === 文件夹操作 ===
-  private async handleFolderSelect(folder: FileFolder): Promise<void> {
+  private handleFolderSelect(folder: FileFolder): void {
     this.clearSearchValue()
-    const updatedFolders = await this.viewModel?.switchToFolder(
+    const updatedFolders = this.viewModel?.switchToFolder(
       folder,
       this.videoListController,
       this.fileFolderSource,

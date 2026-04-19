@@ -144,7 +144,7 @@ export struct MpvPlayer {
               await PermissionUtil.activatePermission(this.mpv.nowPlaying?.uri)
               try {
                 this.mpv.init(this.mpv.nowPlaying!.uri, this.pathStack)
-                // ORM 改造：MPV 播放器开始播放时异步写入最近播放记录（非隐私空间模式下）
+                // 从首页进入播放器时，在此处添加最近播放记录（playChooseVideo 仅处理播放器内切歌）
                 if (Setting.recentPlay && this.mpv.nowPlaying && !PrivacySpaceUtil.getPrivacyMode()) {
                   await RecentPlayUtil.addPlayback(PathUtils.appContext!, this.mpv.nowPlaying)
                 }

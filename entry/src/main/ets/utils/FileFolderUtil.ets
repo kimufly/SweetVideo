@@ -21,6 +21,7 @@ import { VideoEntity } from '../entity/VideoEntity'
 import { salmonLogger } from 'salmonlogger'
 import Preferences from '../database/Preferences'
 import { SortUtil } from './SortUtil'
+import { pinyin4js } from '@ohos/pinyin4js'
 
 // 文件夹类
 // ORM 改造核心文件：所有文件夹/视频的增删改查从 Preferences 迁移到 ibest-orm 的 Repository 层
@@ -34,7 +35,6 @@ export default class FileFolderUtil {
    *      需要显式转换以保证类型安全与 UI 兼容性。
    */
   static toVideoMetadata(entity: VideoEntity): VideoMetadata {
-    console.info(`[toVideoMetadata] ${entity.uri}, title=${entity.title}`)
     return {
       uri: entity.uri,
       title: entity.title,
@@ -49,7 +49,8 @@ export default class FileFolderUtil {
       end_time: Number(entity.endTime) || 0,
       external_subtitle_format: entity.externalSubtitle,
       pointA: Number(entity.pointA) || 0,
-      pointB: Number(entity.pointB) || 0
+      pointB: Number(entity.pointB) || 0,
+      pinyin: entity.pinyin || ''
     }
   }
 
@@ -75,7 +76,16 @@ export default class FileFolderUtil {
     entity.externalSubtitle = metadata.external_subtitle_format
     entity.pointA = metadata.pointA
     entity.pointB = metadata.pointB
+    entity.pinyin = FileFolderUtil.computePinyin(metadata.title)
     return entity
+  }
+
+  static computePinyin(title: string): string {
+    try {
+      return pinyin4js.getShortPinyin(title || '')
+    } catch (e) {
+      return title || ''
+    }
   }
 
   /**
@@ -100,17 +110,13 @@ export default class FileFolderUtil {
   }
 
   /**
-   * 获取所有文件夹（从 ORM）
-   * 使用 folderId 外键关联，避免字符串格式问题
-   * 注意：ibest-orm 的 with('videos') 关联查询在此项目场景下存在类型推断与懒加载问题，
-   *      因此采用手动遍历 folderRepo.findAll() + videoRepo.findByFolderId(id) 的方式逐文件夹加载视频。
-   *      该方式虽然增加了 N+1 查询，但文件夹数量通常较少（<100），性能可接受。
+   * 获取所有文件夹（轻量模式）
+   * 仅加载文件夹元数据，不加载 video_list，用于首页启动和侧边栏渲染。
+   * 彻底解决大文件夹（如80+视频）启动时数据量过大导致的滑动卡顿问题。
    */
-  static async getAllFolderAsync(context: Context): Promise<FileFolder[]> {
+  static async getFolderListAsync(context: Context): Promise<FileFolder[]> {
     const folderRepo = FolderRepository.getInstance()
-    const videoRepo = VideoRepository.getInstance()
 
-    // 获取所有文件夹（首页置顶，其他按日期排序）
     let folderEntities = (await folderRepo.findAll()).sort((a, b) => {
       if (a.name === '首页' && b.name !== '首页') {
         return -1
@@ -121,20 +127,59 @@ export default class FileFolderUtil {
       return (Number(a.date) || 0) - (Number(b.date) || 0)
     })
 
-    // 获取当前排序偏好
+    console.info(`[FileFolderUtil] getFolderListAsync: loaded ${folderEntities.length} folders (no videos)`)
+
+    return folderEntities.map((entity): FileFolder => ({
+      name: entity.name,
+      date: entity.date,
+      video_list: []
+    }))
+  }
+
+  /**
+   * 获取所有文件夹及其完整视频列表（全量模式）
+   * 用于操作后刷新（删除、转移、重命名等），确保 UI 与数据库一致。
+   * 注意：此方法会一次性加载所有视频，仅在低频操作后调用。
+   */
+  static async getAllFolderAsync(context: Context): Promise<FileFolder[]> {
+    const folderRepo = FolderRepository.getInstance()
+    const videoRepo = VideoRepository.getInstance()
+
+    let folderEntities = (await folderRepo.findAll()).sort((a, b) => {
+      if (a.name === '首页' && b.name !== '首页') {
+        return -1
+      }
+      if (a.name !== '首页' && b.name === '首页') {
+        return 1
+      }
+      return (Number(a.date) || 0) - (Number(b.date) || 0)
+    })
+
     const isPrivacy = PrivacySpaceUtil.getPrivacyMode()
     const sortType = Preferences.getVideoSortType(context, isPrivacy)
     const sortOrder = Preferences.getVideoSortOrder(context, isPrivacy)
 
-    // 手动加载每个文件夹的视频（避免 ORM with('videos') 关联查询问题）
     for (const folder of folderEntities) {
       if (folder.id !== undefined) {
         let videos = await videoRepo.findByFolderId(folder.id, sortType, sortOrder)
-        // name 排序需要在应用层处理中文拼音
-        if (sortType === 'name') {
-          videos = FileFolderUtil.sortVideosByPinyin(videos, sortOrder)
-        } else if (sortType === 'time') {
+        // name 排序已由 SQL 层（pinyin 字段）完成，time 排序在应用层处理
+        if (sortType === 'time') {
           videos = FileFolderUtil.sortVideosByDuration(videos, sortOrder)
+        }
+        // 兼容已有数据：pinyin 为空时计算并更新
+        const emptyPinyinVideos = videos.filter(v => !v.pinyin && v.title)
+        if (emptyPinyinVideos.length > 0) {
+          for (const v of emptyPinyinVideos) {
+            v.pinyin = FileFolderUtil.computePinyin(v.title)
+            await videoRepo.save(v)
+          }
+          if (sortType === 'name') {
+            videos.sort((a, b) => {
+              const pa = a.pinyin || ''
+              const pb = b.pinyin || ''
+              return sortOrder === 'asc' ? pa.localeCompare(pb, 'zh-CN') : pb.localeCompare(pa, 'zh-CN')
+            })
+          }
         }
         folder.videos = videos
         console.info(`[getAllFolderAsync] Folder ${folder.name} has ${folder.videos?.length || 0} videos`)
@@ -143,12 +188,55 @@ export default class FileFolderUtil {
 
     console.info(`[FileFolderUtil] getAllFolderAsync: loaded ${folderEntities.length} folders with videos`)
 
-    // ✅ 修复：显式声明 map 回调的返回类型，避免对象字面量类型推断问题
     return folderEntities.map((entity): FileFolder => ({
       name: entity.name,
       date: entity.date,
       video_list: (entity.videos || []).map(v => FileFolderUtil.toVideoMetadata(v))
     }))
+  }
+
+  /**
+   * 异步加载单个文件夹的全部视频（不分页）
+   * 适用于视频数量较少的场景，或作为分页加载的兜底方案。
+   */
+  static async loadFolderVideosAsync(context: Context, folderName: string): Promise<VideoMetadata[]> {
+    const folderRepo = FolderRepository.getInstance()
+    const videoRepo = VideoRepository.getInstance()
+
+    const folder = await folderRepo.findByName(folderName)
+    if (!folder || folder.id === undefined) {
+      return []
+    }
+
+    const isPrivacy = PrivacySpaceUtil.getPrivacyMode()
+    const sortType = Preferences.getVideoSortType(context, isPrivacy)
+    const sortOrder = Preferences.getVideoSortOrder(context, isPrivacy)
+
+    let videos = await videoRepo.findByFolderId(folder.id, sortType, sortOrder)
+    // name 排序已由 SQL 层（pinyin 字段）完成，time 排序在应用层处理
+    if (sortType === 'time') {
+      videos = FileFolderUtil.sortVideosByDuration(videos, sortOrder)
+    }
+
+    // 兼容已有数据：pinyin 为空时计算并更新数据库（只处理空 pinyin 的视频）
+    const emptyPinyinVideos = videos.filter(v => !v.pinyin && v.title)
+    if (emptyPinyinVideos.length > 0) {
+      for (const v of emptyPinyinVideos) {
+        v.pinyin = FileFolderUtil.computePinyin(v.title)
+        await videoRepo.save(v)
+      }
+      // 更新后重新按 pinyin 排序（仅 name 排序模式）
+      if (sortType === 'name') {
+        videos.sort((a, b) => {
+          const pa = a.pinyin || ''
+          const pb = b.pinyin || ''
+          return sortOrder === 'asc' ? pa.localeCompare(pb, 'zh-CN') : pb.localeCompare(pa, 'zh-CN')
+        })
+      }
+    }
+
+    console.info(`[FileFolderUtil] loadFolderVideosAsync: ${folderName} loaded ${videos.length} videos`)
+    return videos.map(v => FileFolderUtil.toVideoMetadata(v))
   }
 
   /**
@@ -316,6 +404,8 @@ export default class FileFolderUtil {
     const videoToUpdate = folder.videos?.find(v => v.date === videoMetaData.date)
     if (videoToUpdate) {
       videoToUpdate.title = videoMetaData.title
+      // 标题变更时重新计算拼音，确保排序正确
+      videoToUpdate.pinyin = FileFolderUtil.computePinyin(videoMetaData.title)
       await videoRepo.save(videoToUpdate)
     }
 

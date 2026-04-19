@@ -1,7 +1,7 @@
 import { FileFolder } from '../interfaces/FileFolderInterface'
 import { VideoMetadata } from '../interfaces/VideoMetadataInterface'
 import { VideoListController } from '../component/VideoItemComponent/VideoItemComponent'
-import { FileFolderDataSource } from '../utils/DataUtil'
+import { FileFolderDataSource, VideoDataSource } from '../utils/DataUtil'
 import FileFolderUtil from '../utils/FileFolderUtil'
 import { PathUtils } from '../utils/PathUtils'
 import { FileProcessorUtil } from '../utils/FileProcessorUtil'
@@ -59,21 +59,22 @@ export class IndexViewModel {
   }
 
   /**
-   * 初始化文件夹列表
-   * 1. 加载所有文件夹
+   * 初始化文件夹列表（轻量模式）
+   * 1. 仅加载文件夹元数据，不加载视频，解决大文件夹启动卡顿问题
    * 2. 如果没有文件夹，创建默认"首页"文件夹
+   * 3. 返回轻量文件夹列表，视频由调用方按需加载
    */
   async initializeFolders(): Promise<FileFolder[]> {
-    console.info('[IndexViewModel] initializeFolders started')
+    console.info('[IndexViewModel] initializeFolders started (lightweight)')
 
     // 文件夹存在性检查
     FileFolderUtil.fileFolderExistCheck()
 
-    // 加载文件夹列表
+    // 加载文件夹列表（轻量模式，不加载视频）
     let folders: FileFolder[] = []
     try {
-      folders = await FileFolderUtil.getAllFolderAsync(this.context)
-      console.info(`[IndexViewModel] Loaded ${folders.length} folders`)
+      folders = await FileFolderUtil.getFolderListAsync(this.context)
+      console.info(`[IndexViewModel] Loaded ${folders.length} folders (lightweight)`)
     } catch (e) {
       console.error(`[IndexViewModel] Error loading folders: ${JSON.stringify(e)}`)
       folders = []
@@ -83,7 +84,9 @@ export class IndexViewModel {
     if (folders.length === 0) {
       console.info('[IndexViewModel] No folders found, creating default folder')
       try {
-        folders = await FileFolderUtil.createNewFolder(this.context, '首页')
+        // 创建文件夹后需要刷新列表
+        await FileFolderUtil.createNewFolder(this.context, '首页')
+        folders = await FileFolderUtil.getFolderListAsync(this.context)
         console.info(`[IndexViewModel] Created default folder, now have ${folders.length} folders`)
       } catch (e) {
         console.error(`[IndexViewModel] Error creating folder: ${JSON.stringify(e)}`)
@@ -92,6 +95,13 @@ export class IndexViewModel {
 
     this.onFoldersUpdated(folders)
     return folders
+  }
+
+  /**
+   * 加载指定文件夹的视频（不分页，适用于视频数量较少的场景）
+   */
+  async loadFolderVideos(folderName: string): Promise<VideoMetadata[]> {
+    return FileFolderUtil.loadFolderVideosAsync(this.context, folderName)
   }
 
   /**
@@ -281,37 +291,64 @@ export class IndexViewModel {
    * @param fileFolderSource 文件夹数据源
    * @param searchValue 当前搜索值（可选）
    */
-  async switchToFolder(
+  switchToFolder(
     folder: FileFolder,
     videoListController: VideoListController,
     fileFolderSource: FileFolderDataSource,
     searchValue: string = ''
-  ): Promise<FileFolder[]> {
+  ): FileFolder[] {
     if (videoListController.folder?.date === folder.date) {
-      return await FileFolderUtil.getAllFolderAsync(this.context)
+      return fileFolderSource.getAllData()
     }
 
-    // 刷新文件夹列表
-    const updatedFolders = await FileFolderUtil.getAllFolderAsync(this.context)
-    fileFolderSource.updateData(updatedFolders)
-
-    // 获取目标文件夹的最新数据
-    const currentFolder = fileFolderSource.getFileFolder(folder.name)
-    if (currentFolder) {
-      // 应用搜索过滤
-      let videosToShow = currentFolder.video_list
+    // 优先检查缓存
+    const cached = videoListController.getCachedFolder(folder.date)
+    if (cached && cached.video_list.length > 0) {
+      let videosToShow = cached.video_list
       if (searchValue.length > 0) {
-        videosToShow = SelectFileUtil.getItemFromSearch(currentFolder.video_list, searchValue)
+        videosToShow = SelectFileUtil.getItemFromSearch(cached.video_list, searchValue)
       }
-
-      videoListController.videoDataSource.updateData(videosToShow)
-      videoListController.updateData(videoListController.videoDataSource, currentFolder)
-
-      // 同步面包屑选中状态
+      videoListController.updateData(new VideoDataSource(videosToShow), cached)
       AppStorage.setOrCreate('scrollToFolderDate', folder.date)
+      return fileFolderSource.getAllData()
     }
 
-    return updatedFolders
+    // 缓存未命中：保持当前列表，延迟加载避免阻塞切换动画
+    videoListController.startFolderSwitch({ name: folder.name, date: folder.date, video_list: [] })
+    AppStorage.setOrCreate('scrollToFolderDate', folder.date)
+
+    setTimeout(() => {
+      this.loadFolderVideosAsync(folder, videoListController, searchValue)
+    }, 0)
+
+    return fileFolderSource.getAllData()
+  }
+
+  private async loadFolderVideosAsync(folder: FileFolder, videoListController: VideoListController,
+    searchValue: string): Promise<void> {
+    let videos: VideoMetadata[] = []
+    if (folder.name) {
+      try {
+        videos = await FileFolderUtil.loadFolderVideosAsync(this.context, folder.name)
+      } catch (e) {
+        console.error(`[IndexViewModel] Failed to load videos for ${folder.name}: ${e}`)
+      }
+    }
+
+    // 竞态保护：加载完成时若用户已切换到其他文件夹，则不更新数据
+    if (videoListController.folder?.date !== folder.date) {
+      console.info(`[IndexViewModel] Folder changed during load, skip updating ${folder.name}`)
+      return
+    }
+
+    let videosToShow = videos
+    if (searchValue.length > 0) {
+      videosToShow = SelectFileUtil.getItemFromSearch(videos, searchValue)
+    }
+
+    const folderWithVideos: FileFolder = { name: folder.name, date: folder.date, video_list: videos }
+    videoListController.videoDataSource.updateData(videosToShow)
+    videoListController.updateData(videoListController.videoDataSource, folderWithVideos)
   }
 
   /**

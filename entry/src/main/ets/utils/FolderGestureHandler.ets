@@ -1,7 +1,8 @@
 import { FileFolder } from '../interfaces/FileFolderInterface'
+import { VideoMetadata } from '../interfaces/VideoMetadataInterface'
 import { VideoListController } from '../component/VideoItemComponent/VideoItemComponent'
 import { SideBarController } from '../component/SideBarComponent/SideBar'
-import { FileFolderDataSource } from '../utils/DataUtil'
+import { FileFolderDataSource, VideoDataSource } from '../utils/DataUtil'
 import FileFolderUtil from '../utils/FileFolderUtil'
 import { PathUtils } from '../utils/PathUtils'
 import SelectFileUtil from '../utils/SelectFileUtil'
@@ -136,44 +137,62 @@ export class FolderGestureHandler {
 
   /**
    * 执行文件夹切换
+   * 交互优化：先立即切换 UI（空列表 + loading），再异步加载视频，确保手势滑动不被阻塞
    */
-  private async performFolderSwitch(targetFolder: FileFolder, index: number): Promise<void> {
-    // 刷新文件夹列表（确保数据最新）
-    const updatedFolders = await FileFolderUtil.getAllFolderAsync(PathUtils.appContext!)
-    this.fileFolderSource.updateData(updatedFolders)
-
-    // 获取目标文件夹的最新数据
-    const currentFolder = this.fileFolderSource.getFileFolder(targetFolder.name)
-    if (currentFolder) {
-      animateTo({
-        duration: 200,
-        curve: Curve.EaseInOut
-      }, () => {
-        this.videoListController.videoDataSource.updateData(currentFolder.video_list)
-        this.videoListController.updateData(
-          this.videoListController.videoDataSource,
-          currentFolder
-        )
+  private performFolderSwitch(targetFolder: FileFolder, index: number): void {
+    // 优先检查缓存：如果该文件夹已加载过，直接切换，不再查询 ORM
+    const cached = this.videoListController.getCachedFolder(targetFolder.date)
+    if (cached && cached.video_list.length > 0) {
+      this.videoListController.updateData(undefined, cached)
+      this.onFolderSwitch(targetFolder, index)
+      const estimatedOffset = index > 0 ? 260 + (index - 1) * 70 : 0
+      animateToImmediately({ duration: 200, curve: Curve.Ease }, () => {
+        this.onSideBarScroll(estimatedOffset)
       })
+      return
     }
 
-    // 触发回调
-    this.onFolderSwitch(targetFolder, index)
+    // 缓存未命中：保持当前列表显示，只更新 folder 引用和 loading 状态，延迟加载避免阻塞切换动画
+    this.videoListController.startFolderSwitch({ name: targetFolder.name, date: targetFolder.date, video_list: [] })
 
-    // 计算侧边栏滚动位置并触发滚动
+    this.onFolderSwitch(targetFolder, index)
     const estimatedOffset = index > 0 ? 260 + (index - 1) * 70 : 0
-    animateToImmediately({
-      duration: 200,
-      curve: Curve.Ease
-    }, () => {
+    animateToImmediately({ duration: 200, curve: Curve.Ease }, () => {
       this.onSideBarScroll(estimatedOffset)
     })
+
+    // 延迟到下一帧加载，让切换动画先完成
+    setTimeout(() => {
+      this.loadFolderVideosAsync(targetFolder)
+    }, 0)
+  }
+
+  private async loadFolderVideosAsync(targetFolder: FileFolder): Promise<void> {
+    let videos: VideoMetadata[] = []
+    if (targetFolder.name) {
+      try {
+        videos = await FileFolderUtil.loadFolderVideosAsync(PathUtils.appContext!, targetFolder.name)
+      } catch (e) {
+        console.error(`[FolderGestureHandler] Failed to load videos for ${targetFolder.name}: ${e}`)
+      }
+    }
+
+    // 竞态保护：加载完成时若用户已切换到其他文件夹，则不更新数据
+    if (this.videoListController.folder?.date !== targetFolder.date) {
+      console.info(`[FolderGestureHandler] Folder changed during load, skip updating ${targetFolder.name}`)
+      return
+    }
+
+    const folderWithVideos: FileFolder = { name: targetFolder.name, date: targetFolder.date, video_list: videos }
+    this.videoListController.videoDataSource.updateData(videos)
+    this.videoListController.updateData(this.videoListController.videoDataSource, folderWithVideos)
   }
 
   /**
    * 带搜索过滤的文件夹切换
+   * 交互优化：先立即切换 UI，再异步加载视频
    */
-  async switchToFolderWithSearch(index: number, searchValue: string): Promise<void> {
+  switchToFolderWithSearch(index: number, searchValue: string): void {
     if (index < 0 || index >= this.file_folder_list.length) {
       return
     }
@@ -183,40 +202,61 @@ export class FolderGestureHandler {
       return
     }
 
-    // 刷新文件夹列表
-    const updatedFolders = await FileFolderUtil.getAllFolderAsync(PathUtils.appContext!)
-    this.fileFolderSource.updateData(updatedFolders)
-
-    // 获取目标文件夹的最新数据
-    const currentFolder = this.fileFolderSource.getFileFolder(targetFolder.name)
-    if (currentFolder) {
-      // 如果有搜索值，在新文件夹中过滤视频
-      let filteredVideos = currentFolder.video_list
-      if (searchValue.length > 0) {
-        filteredVideos = SelectFileUtil.getItemFromSearch(currentFolder.video_list, searchValue)
-      }
-      animateTo({
-        duration: 200,
-        curve: Curve.EaseInOut
-      }, () => {
-        this.videoListController.videoDataSource.updateData(filteredVideos)
-        this.videoListController.updateData(
-          this.videoListController.videoDataSource,
-          currentFolder
-        )
+    // 优先检查缓存
+    const cached = this.videoListController.getCachedFolder(targetFolder.date)
+    if (cached && cached.video_list.length > 0) {
+      const filtered = searchValue.length > 0
+        ? SelectFileUtil.getItemFromSearch(cached.video_list, searchValue)
+        : cached.video_list
+      this.videoListController.updateData(new VideoDataSource(filtered), cached)
+      this.onFolderSwitch(targetFolder, index)
+      const estimatedOffset = index > 0 ? 260 + (index - 1) * 70 : 0
+      animateToImmediately({ duration: 200, curve: Curve.Ease }, () => {
+        this.onSideBarScroll(estimatedOffset)
       })
+      return
     }
 
-    // 触发回调
-    this.onFolderSwitch(targetFolder, index)
+    // 缓存未命中：保持当前列表，延迟加载避免阻塞切换动画
+    this.videoListController.startFolderSwitch({ name: targetFolder.name, date: targetFolder.date, video_list: [] })
 
-    // 侧边栏滚动
+    this.onFolderSwitch(targetFolder, index)
     const estimatedOffset = index > 0 ? 260 + (index - 1) * 70 : 0
-    animateToImmediately({
-      duration: 200,
-      curve: Curve.Ease
-    }, () => {
+    animateToImmediately({ duration: 200, curve: Curve.Ease }, () => {
       this.onSideBarScroll(estimatedOffset)
     })
+
+    setTimeout(() => {
+      this.loadFolderVideosWithSearchAsync(targetFolder, searchValue)
+    }, 0)
+  }
+
+  private async loadFolderVideosWithSearchAsync(targetFolder: FileFolder, searchValue: string): Promise<void> {
+    let videos: VideoMetadata[] = []
+    if (targetFolder.name) {
+      try {
+        videos = await FileFolderUtil.loadFolderVideosAsync(PathUtils.appContext!, targetFolder.name)
+      } catch (e) {
+        console.error(`[FolderGestureHandler] Failed to load videos for ${targetFolder.name}: ${e}`)
+      }
+    }
+
+    // 竞态保护
+    if (this.videoListController.folder?.date !== targetFolder.date) {
+      console.info(`[FolderGestureHandler] Folder changed during load (search), skip updating ${targetFolder.name}`)
+      return
+    }
+
+    let filteredVideos = videos
+    if (searchValue.length > 0) {
+      filteredVideos = SelectFileUtil.getItemFromSearch(videos, searchValue)
+    }
+
+    const folderWithVideos: FileFolder = { name: targetFolder.name, date: targetFolder.date, video_list: videos }
+    this.videoListController.videoDataSource.updateData(filteredVideos)
+    this.videoListController.updateData(
+      this.videoListController.videoDataSource,
+      folderWithVideos
+    )
   }
 }

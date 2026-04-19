@@ -96,10 +96,7 @@ export class RecentPlayRepository {
   }
 
   async clearAll(): Promise<void> {
-    const all = await this.findAll()
-    for (const item of all) {
-      await this.delete(item)
-    }
+    this.query().delete()
   }
 
   migrate(): void {

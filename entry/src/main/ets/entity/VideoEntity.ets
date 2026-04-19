@@ -68,6 +68,9 @@ export class VideoEntity {
   sortOrder: number = 0
 
   @Column()
+  pinyin: string = ''
+
+  @Column()
   subtitle_mode: number = 0
 
   @Column()

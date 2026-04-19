@@ -53,6 +53,8 @@ import {
 } from '../../common/Constants'
 import { AISubtitleComponent } from '../../component/PlayerComponent/AIAsrComponent'
 import PiPWindowUtil from '../../utils/PiPWindowUtil'
+import RecentPlayUtil from '../../utils/RecentPlayUtil'
+import PrivacySpaceUtil from '../../utils/PrivacySpaceUtil'
 import { DefaultDialogShadow } from '../../common/AttributeModifierConfig'
 import { NumberInputDialog } from '../../component/Dialog/NumberInputDialog'
 import { SubtitleOffsetDialog } from '../../component/Dialog/SubtitleOffsetDialog'
@@ -203,6 +205,10 @@ export struct Player { // 播放页
               await this.player.init()
               this.player.setPlayerCallback(this.pathStack, this.xComponentController, this.windowClass)
               await this.player.getData(this.pathStack, this.windowClass)
+              // 从首页进入播放器时，在此处添加最近播放记录（playChooseVideo 仅处理播放器内切歌）
+              if (Setting.recentPlay && this.player.nowPlaying && !PrivacySpaceUtil.getPrivacyMode()) {
+                await RecentPlayUtil.addPlayback(PathUtils.appContext!, this.player.nowPlaying)
+              }
               PiPWindowUtil.createPipController(this.xComponentController, this.player)
             },
             onKeyCodeSpace: () => {

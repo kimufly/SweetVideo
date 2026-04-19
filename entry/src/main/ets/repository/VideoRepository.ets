@@ -47,11 +47,13 @@ export class VideoRepository {
     order: 'asc' | 'desc' = 'desc'): Promise<VideoEntity[]> {
     let query = this.query().where({ folderId: folderId })
 
-    // datetime 排序在 SQL 层完成
     if (sortType === 'datetime') {
       query = query.orderBy('date', order)
+    } else if (sortType === 'name') {
+      // 拼音字段预计算，SQL 层直接排序，避免应用层调用 pinyin4js
+      query = query.orderBy('pinyin', order)
     }
-    // name 和 time 排序在应用层处理（name 需要中文拼音，time 确保数字正确排序）
+    // time 排序在应用层处理（确保数字正确排序）
 
     const results = await query.find()
     console.info(`[VideoRepository] findByFolderId(${folderId}, ${sortType}, ${order}) returned ${results.length} videos`)

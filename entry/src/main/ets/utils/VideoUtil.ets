@@ -25,10 +25,8 @@ export default class VideoUtils {
       ToolsUtil.showToast('出异常了：数据刷新失败')
       return folders
     }
-    // 同步刷新 videoDataSource（右侧视频列表），即使 video_list 为空也显式更新
-    videoListController.videoDataSource.updateData(currentFolder.video_list || [])
-    // 更新 VideoListController 内部状态（当前 folder、列数等）
-    videoListController.updateData(videoListController.videoDataSource, currentFolder!)
+    // updateData 内部会同步 videoDataSource 和 folder，并自动重置分页状态
+    videoListController.updateData(undefined, currentFolder!)
     return folders
   }
 }

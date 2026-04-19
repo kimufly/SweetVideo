@@ -73,7 +73,7 @@ export function VideoInfoBuilder(params: VideoInfoBuilderParams) {
         .width(30)
         .color($r('app.color.main_color'))
         .height(30)
-        .style({ strokeWidth: 5, shadow: true, enableSmoothEffect: true })
+        .style({ strokeWidth: 5, shadow: false, enableSmoothEffect: false })
     }
   }
   .justifyContent(FlexAlign.Start)

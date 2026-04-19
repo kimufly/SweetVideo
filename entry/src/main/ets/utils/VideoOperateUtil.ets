@@ -17,15 +17,12 @@ import VideoInfoUtil from './VideoInfoUtil'
 import { salmonLogger } from 'salmonlogger'
 import { FrameSize } from '../interfaces/FrameSizeInterface'
 import { SUPPORT_AUDIO_FORMAT } from '../common/Constants'
-import { VideoSource } from '../common/enum/VideoSource'
 import { VideoStartTimeMode } from '../common/enum/VideoStartTimeMode'
 import { LanguageConfig } from '../common/LanguageConfig'
 import Preferences from '../database/Preferences'
 import { XAnimation } from './AnimationUtil'
 import DataSyncUtil from './DataSyncUtil'
 import PermissionUtil from './PermissionUtil'
-import PrivacySpaceUtil from './PrivacySpaceUtil'
-import RecentPlayUtil from './RecentPlayUtil'
 import SelectFileUtil from './SelectFileUtil'
 import { WindowUtil } from './WindowUtil'
 import { hilog } from '@kit.PerformanceAnalysisKit'
@@ -236,19 +233,12 @@ export default class VideoOperateUtil {
   }
 
   // 保存视频播放进度
-  // ORM 改造：SelectFileUtil.saveData 和 RecentPlayUtil.addPlayback 已改为异步，
-  // 因此所有 save 方法都改为 async，确保数据库写入完成后再返回，避免应用切后台时数据丢失。
+  // ORM 改造：saveVideoTime 仅负责保存播放进度，最近播放记录的添加由 playChooseVideo 统一处理，
+  // 避免 saveVideoTime 在 onWillDisappear/completed 等多处被调用时重复添加最近播放记录。
   static async saveVideoTime(play_time: number, nowPlaying: VideoMetadata,
     videoMetaData: VideoMetadata[], context: Context): Promise<void> {
     // 保存文件数据
     await SelectFileUtil.saveData(context, nowPlaying!, { playTime: play_time })
-    if (Setting.recentPlay && !PrivacySpaceUtil.getPrivacyMode() &&
-      !SelectFileUtil.isPathFromSource(nowPlaying.uri, VideoSource.PRIVACY_SPACE)) { // 最近播放开启且非隐私空间视频则添加到最近播放
-      const meta = videoMetaData.find(i => i.date == nowPlaying?.date)
-      if (meta) {
-        await RecentPlayUtil.addPlayback(context, meta)
-      }
-    }
   }
 
   // 保存视频片头时间

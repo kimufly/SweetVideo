@@ -36,6 +36,11 @@ export default struct VideoCardItem {
     })
   }
 
+  aboutToReuse() {
+    // @Watch('onItemChange') 已在 @Prop 更新时自动更新 coverUri
+    // coverEventBus 回调通过 this.item.date 访问，复用时 @Prop 自动更新，无需重新订阅
+  }
+
   aboutToDisappear() {
     this.unsubscribeCoverEvent?.()
     this.unsubscribeCoverEvent = null
