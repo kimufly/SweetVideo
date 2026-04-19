@@ -63,7 +63,8 @@ export struct PrivacySpace { // 隐私空间页
       end_time: Number(entity.endTime) || 0,
       external_subtitle_format: '',
       pointA: Number(entity.pointA) || 0,
-      pointB: Number(entity.pointB) || 0
+      pointB: Number(entity.pointB) || 0,
+      pinyin: entity.pinyin || ''
     }
   }
 
@@ -85,44 +86,35 @@ export struct PrivacySpace { // 隐私空间页
   }
 
   // 从 ORM 加载隐私视频
-  // 说明：ibest-orm 的 ORDER BY 对中文拼音支持不佳，因此 name 排序在 SQL 查询后
-  //       通过 SortUtil.sortByPinyin 在应用层二次排序；time 排序同理做数字类型转换后重排。
+  // name 排序由 SQL 层 pinyin 字段完成；time 排序在应用层处理
   private async loadPrivacyVideos(): Promise<void> {
     const privacyRepo = PrivacyVideoRepository.getInstance()
-    // 获取排序偏好和方向
     const sortType = Preferences.getVideoSortType(PathUtils.appContext!, true)
     const sortOrder = Preferences.getVideoSortOrder(PathUtils.appContext!, true)
     let entities = await privacyRepo.findAllOrdered(sortType, sortOrder)
-    // name 排序需要在应用层处理中文拼音，time 排序确保数字正确排序
-    if (sortType === 'name') {
-      entities = this.sortEntitiesByPinyin(entities, sortOrder)
-    } else if (sortType === 'time') {
-      entities = this.sortEntitiesByDuration(entities, sortOrder)
+
+    // 兼容已有数据：pinyin 为空时计算并更新数据库
+    const emptyPinyinVideos = entities.filter(v => !v.pinyin && v.title)
+    if (emptyPinyinVideos.length > 0) {
+      for (const v of emptyPinyinVideos) {
+        v.pinyin = FileFolderUtil.computePinyin(v.title)
+        await privacyRepo.save(v)
+      }
+      if (sortType === 'name') {
+        entities.sort((a, b) => {
+          const pa = a.pinyin || ''
+          const pb = b.pinyin || ''
+          return sortOrder === 'asc' ? pa.localeCompare(pb, 'zh-CN') : pb.localeCompare(pa, 'zh-CN')
+        })
+      }
     }
+
+    if (sortType === 'time') {
+      entities = SortUtil.sortByDuration(entities, (e) => e.duration, sortOrder)
+    }
+
     this.video_meta_data_encryption = entities.map(e => this.toVideoMetadata(e))
     this.videoDataSource.updateData(this.video_meta_data_encryption)
-  }
-
-  /**
-   * 按拼音排序隐私视频实体（支持中文自然排序）
-   * 使用 SortUtil 通用排序工具
-   * @param entities 视频实体数组
-   * @param order 排序方向：'asc' 升序(A-Z)，'desc' 降序(Z-A)
-   * @returns 排序后的实体数组
-   */
-  private sortEntitiesByPinyin(entities: PrivacyVideoEntity[], order: 'asc' | 'desc' = 'desc'): PrivacyVideoEntity[] {
-    return SortUtil.sortByPinyin(entities, (e) => e.title, order)
-  }
-
-  /**
-   * 按时长排序隐私视频实体
-   * 使用 SortUtil 通用排序工具
-   * @param entities 视频实体数组
-   * @param order 排序方向：'asc' 升序(短→长)，'desc' 降序(长→短)
-   * @returns 排序后的实体数组
-   */
-  private sortEntitiesByDuration(entities: PrivacyVideoEntity[], order: 'asc' | 'desc' = 'desc'): PrivacyVideoEntity[] {
-    return SortUtil.sortByDuration(entities, (e) => e.duration, order)
   }
 
   // 保存隐私视频到 ORM
@@ -131,6 +123,7 @@ export struct PrivacySpace { // 隐私空间页
     const entity = new PrivacyVideoEntity()
     entity.uri = video.uri
     entity.title = video.title
+    entity.pinyin = FileFolderUtil.computePinyin(video.title)
     entity.originalUri = originalUri || video.uri
     entity.width = video.size[0] || 0
     entity.height = video.size[1] || 0
@@ -171,6 +164,7 @@ export struct PrivacySpace { // 隐私空间页
         const entity = await privacyRepo.query().where({ uri: editingVideo.uri }).find()
         if (entity.length > 0) {
           entity[0].title = title.trim()
+          entity[0].pinyin = FileFolderUtil.computePinyin(title.trim())
           await privacyRepo.save(entity[0])
         }
         // 更新本地数据

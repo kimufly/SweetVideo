@@ -2,7 +2,6 @@ import { vibrator } from '@kit.SensorServiceKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { bundleManager, ConfigurationConstant } from '@kit.AbilityKit'
-import { pinyin4js } from '@ohos/pinyin4js'
 import { VideoMetadata } from '../interfaces/VideoMetadataInterface'
 import { FileFolder } from '../interfaces/FileFolderInterface'
 import Preferences from '../database/Preferences'
@@ -88,12 +87,13 @@ export default class ToolsUtil {
     if (list.length <= 1) {
       return [...list]
     }
+    // pinyin 已在数据库层预计算，直接复用，不调用 pinyin4js
     const itemsWithPinyin: VideoItemWithPinyin[] = list.map(item => {
-      const videoItem: VideoItemWithPinyin = {
+      const result: VideoItemWithPinyin = {
         item: item,
-        pinyin: pinyin4js.getShortPinyin(item.title || "")
+        pinyin: item.pinyin || ''
       }
-      return videoItem
+      return result
     })
     const sortedItems = [...itemsWithPinyin].sort((a, b) => {
       const result = ToolsUtil.naturalCompare(a.pinyin, b.pinyin)

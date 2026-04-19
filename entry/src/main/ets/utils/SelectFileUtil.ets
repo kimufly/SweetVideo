@@ -263,6 +263,7 @@ export default class SelectFileUtil {
       const entity = new PrivacyVideoEntity()
       entity.uri = videoInfo.uri
       entity.title = videoInfo.title
+      entity.pinyin = FileFolderUtil.computePinyin(videoInfo.title)
       entity.originalUri = uri
       entity.width = videoInfo.size[0] || 0
       entity.height = videoInfo.size[1] || 0

@@ -13,6 +13,7 @@ import { PrivacyVideoRepository } from '../repository/PrivacyVideoRepository'
 import { FileFolder } from '../interfaces/FileFolderInterface'
 import { VideoMetadata } from '../interfaces/VideoMetadataInterface'
 import PrivacySpaceUtil from './PrivacySpaceUtil'
+import FileFolderUtil from './FileFolderUtil'
 
 const DATABASE_NAME = 'sweet_video'
 // 旧版本所有数据（包括隐私视频）都存储在 sweet_video 中
@@ -336,6 +337,7 @@ export class DataMigrationHelper {
     const entity = new PrivacyVideoEntity()
     entity.uri = video.uri
     entity.title = video.title
+    entity.pinyin = FileFolderUtil.computePinyin(video.title)
     entity.originalUri = video.uri
     entity.date = video.date
     entity.width = video.size?.[0] || 0

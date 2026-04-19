@@ -75,4 +75,7 @@ export class PrivacyVideoEntity {
 
   @Column()
   subtitle_track_id: number = 0
+
+  @Column()
+  pinyin: string = ''
 }

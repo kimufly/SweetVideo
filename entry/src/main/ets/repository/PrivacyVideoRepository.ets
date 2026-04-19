@@ -43,11 +43,13 @@ export class PrivacyVideoRepository {
     order: 'asc' | 'desc' = 'desc'): Promise<PrivacyVideoEntity[]> {
     let query = this.query()
 
-    // datetime 排序在 SQL 层完成
     if (sortType === 'datetime') {
       query = query.orderBy('importedAt', order)
+    } else if (sortType === 'name') {
+      // 拼音字段预计算，SQL 层直接排序
+      query = query.orderBy('pinyin', order)
     }
-    // name 和 time 排序在应用层处理
+    // time 排序在应用层处理
 
     return query.find()
   }
