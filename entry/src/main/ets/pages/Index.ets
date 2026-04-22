@@ -408,24 +408,26 @@ struct Index {
           .fadingEdge(true)
 
           Column() {
-            Button({ type: ButtonType.Normal, stateEffect: true }) {
-              Row() {
-                SymbolGlyph($r('sys.symbol.clock')).attributeModifier(new SymbolGlyphFancyModifier(25, '', ''))
-                Text('最近播放')
-                  .fontSize(15)
-                  .fontColor($r('app.color.text_color'))
-                  .margin({ left: 10, right: 12 })
-                  .textOverflow({ overflow: TextOverflow.MARQUEE })
+            if (Setting.recentPlay) {
+              Button({ type: ButtonType.Normal, stateEffect: true }) {
+                Row() {
+                  SymbolGlyph($r('sys.symbol.clock')).attributeModifier(new SymbolGlyphFancyModifier(25, '', ''))
+                  Text('最近播放')
+                    .fontSize(15)
+                    .fontColor($r('app.color.text_color'))
+                    .margin({ left: 10, right: 12 })
+                    .textOverflow({ overflow: TextOverflow.MARQUEE })
+                }
               }
+              .align(Alignment.Start)
+              .padding({ left: 15, right: 15 })
+              .attributeModifier(new ButtonFancyModifier('100%', 60))
+              .animation({ duration: 300, curve: Curve.Ease })
+              .onClick(async () => {
+                this.sideBarController.close(false)
+                this.pathStack.pushPathByName(NavigationAddress.RECENT_PLAY, true)
+              })
             }
-            .align(Alignment.Start)
-            .padding({ left: 15, right: 15 })
-            .attributeModifier(new ButtonFancyModifier('100%', 60))
-            .animation({ duration: 300, curve: Curve.Ease })
-            .onClick(async () => {
-              this.sideBarController.close(false)
-              this.pathStack.pushPathByName(NavigationAddress.RECENT_PLAY, true)
-            })
 
             Button({ type: ButtonType.Normal, stateEffect: true }) {
               Row() {
