@@ -1,4 +1,4 @@
-import { SearchShadowModifier } from '../../common/AttributeModifierConfig'
+import { SearchShadowModifier } from "../../common/AttributeModifierConfig"
 
 @Component
 export struct SearchComponent {

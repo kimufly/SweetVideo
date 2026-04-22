@@ -95,13 +95,11 @@ export struct FileFolderView {
       })
         .onClick(async () => {
           DataSyncUtil.delMultipleList = Array.from(file_folder.video_list)
-          const deletePromises = DataSyncUtil.delMultipleList.map(item => {
-            return new Promise<void>(() => {
-              this.videoListController.videoDataSource.deleteItem(DeleteType.SOFT, item)
-              this.videoListController.closeMultipleChoose()
-            })
+          const deletePromises = DataSyncUtil.delMultipleList.map(async item => {
+            await this.videoListController.videoDataSource.deleteItem(DeleteType.SOFT, item)
           })
           await Promise.all(deletePromises)
+          this.videoListController.closeMultipleChoose()
           this.fileFolderSource.deleteData(this.fileFolderList.findIndex(i => i.date === file_folder.date))
           this.fileFolderList = FileFolderUtil.deleteFileFolder(PathUtils.appContext!, file_folder)
           await this.videoListController.refreshFolderData()

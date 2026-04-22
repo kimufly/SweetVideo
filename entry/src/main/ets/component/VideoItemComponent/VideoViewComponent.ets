@@ -12,7 +12,7 @@ import SelectFileUtil from '../../utils/SelectFileUtil'
 import ToolsUtil from '../../utils/ToolsUtil'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 import DataSyncUtil from '../../utils/DataSyncUtil'
-import { FileFolderDataSource, VideoDataSource } from '../../utils/DataUtil'
+import { FileFolderDataSource } from '../../utils/DataUtil'
 import { FileFolderMenu } from '../FileFolderComponent/FileFolderMenu'
 import { MaskComponent } from '../SideBarComponent/MaskComponent'
 import { SearchComponent } from './SearchComponent'
@@ -21,11 +21,14 @@ import VideoUtils from '../../utils/VideoUtil'
 import FileFolderUtil from '../../utils/FileFolderUtil'
 import NavigationAddress from '../../common/NavigationCommon'
 import Preferences from '../../database/Preferences'
-import PrivacySpaceUtil from '../../utils/PrivacySpaceUtil'
 import { XAnimation } from '../../utils/AnimationUtil'
 import { FileFolder } from '../../interfaces/FileFolderInterface'
 import { SafeHeight, Setting } from '../../utils/ObservedUtil'
 import { SortComponent } from './SortComponent'
+import { DebounceUtil } from '../../utils/DebounceUtil'
+import { salmonLogger } from 'salmonlogger'
+
+const TAG = 'VideoViewComponent'
 
 @Component
 export struct VideoView {
@@ -43,10 +46,6 @@ export struct VideoView {
   @State currentFolderIndex: number = 0
   // 监听文件夹切换，同步面包屑选中状态
   @Watch('onFolderChanged') @StorageLink('scrollToFolderDate') scrollToFolderDate: number = 0
-  // 排序方向状态，用于触发排序按钮 UI 刷新
-  // 说明：ORM 改造后排序偏好保存在 Preferences 中，但每次排序后需要同步刷新按钮图标，
-  //       因此增加 @State sortOrder 响应式状态，在排序回调中重新读取偏好值。
-  @State sortOrder: 'asc' | 'desc' = 'desc'
   private passwd: string = 'passwd'
   // 面包屑滚动控制器
   private breadcrumbScroller: Scroller = new Scroller()
@@ -143,22 +142,24 @@ export struct VideoView {
           SearchComponent({
             controller: this.searchController,
             searchValue: this.searchValue,
-            onChange: async () => {
-              // ORM 改造：FolderOperator.getFolderByName 已从同步改为异步，搜索清空或过滤时都需要 await
-              if (this.searchValue === '') {
-                const folder = await FolderOperator.getFolderByName(this.videoListController.folder.name)
-                const videoMetaDataList: VideoMetadata[] = folder?.video_list || []
-                this.videoListController.videoDataSource.updateData(videoMetaDataList)
-                this.videoListController.updateData(this.videoListController.videoDataSource,
-                  this.videoListController.folder)
-              } else {
-                const folder = await FolderOperator.getFolderByName(this.videoListController.folder.name)
-                const videoMetaDataList: VideoMetadata[] =
-                  SelectFileUtil.getItemFromSearch(folder?.video_list || [], this.searchValue)
-                this.videoListController.videoDataSource.updateData(videoMetaDataList)
-                this.videoListController.updateData(this.videoListController.videoDataSource,
-                  this.videoListController.folder)
-              }
+            onChange: () => {
+              // 使用防抖，避免快速输入时频繁过滤
+              DebounceUtil.debounce('search', () => {
+                if (this.searchValue === '') {
+                  const videoMetaDataList: VideoMetadata[] =
+                    FolderOperator.getFolderByName(this.videoListController.folder.name).video_list
+                  this.videoListController.videoDataSource.updateData(videoMetaDataList)
+                  this.videoListController.updateData(this.videoListController.videoDataSource,
+                    this.videoListController.folder)
+                } else {
+                  const videoMetaDataList: VideoMetadata[] =
+                    SelectFileUtil.getItemFromSearch(FolderOperator.getFolderByName(this.videoListController.folder.name)
+                      .video_list, this.searchValue)
+                  this.videoListController.videoDataSource.updateData(videoMetaDataList)
+                  this.videoListController.updateData(this.videoListController.videoDataSource,
+                    this.videoListController.folder)
+                }
+              }, 300)
             },
             onSubmit: (value: string) => {
               if (value == '') {
@@ -190,7 +191,18 @@ export struct VideoView {
           })
 
           if (!this.is_edit) {
-            this.SortButtonBuilder()
+            Button({ type: ButtonType.Circle, stateEffect: true }) {
+              SymbolGlyph($r('sys.symbol.text_and_arrow_down'))
+                .attributeModifier(new SymbolGlyphFancyModifier(25, '', ''))
+            }
+            .attributeModifier(new ButtonFancyModifier(40, 40))
+            .bindMenu(this.SortMenuBuilder,
+              {
+                backgroundBlurStyle: BlurStyle.Regular,
+                hapticFeedbackMode: HapticFeedbackMode.ENABLED
+              })
+            .attributeModifier(new SearchShadowModifier())
+            .transition(XAnimation.getAnimation('right', 0, false))
 
             if (this.videoListController.multipleChooseState === Visibility.Visible) {
               Button({ type: ButtonType.Circle, stateEffect: true }) {
@@ -199,7 +211,10 @@ export struct VideoView {
               }
               .attributeModifier(new ButtonFancyModifier(40, 40))
               .bindMenu(this.SelectItemMenuBuilder,
-                { backgroundBlurStyle: BlurStyle.COMPONENT_ULTRA_THIN })
+                {
+                  backgroundBlurStyle: BlurStyle.Regular,
+                  hapticFeedbackMode: HapticFeedbackMode.ENABLED
+                })
               .attributeModifier(new SearchShadowModifier())
               .transition(XAnimation.getAnimation('right', 0, false))
             }
@@ -215,60 +230,23 @@ export struct VideoView {
     }.width('100%')
   }
 
-  // 获取当前排序按钮的图标资源
-  private getSortIconResource(): Resource {
-    // 使用通用排序图标，不根据排序类型变化
-    return $r('sys.symbol.text_and_arrow_down')
-  }
-
-  /**
-   * 获取当前排序方向
-   * @returns 'asc' 升序（从小到大）或 'desc' 降序（从大到小）
-   */
-  private getSortOrder(): 'asc' | 'desc' {
-    const isPrivacy = PrivacySpaceUtil.getPrivacyMode()
-    return Preferences.getVideoSortOrder(PathUtils.appContext!, isPrivacy)
-  }
-
-  /**
-   * 排序按钮 Builder
-   * 显示通用排序图标 + 升序指示器
-   * 点击后弹出排序菜单，可切换排序类型和方向
-   */
-  @Builder
-  SortButtonBuilder() {
-    Button({ type: ButtonType.Circle, stateEffect: true }) {
-      // 根据排序方向切换图标：降序向下箭头，升序向上箭头
-      SymbolGlyph(this.sortOrder === 'asc' ? $r('sys.symbol.text_and_arrow_up') : $r('sys.symbol.text_and_arrow_down'))
-        .attributeModifier(new SymbolGlyphFancyModifier(25, '', ''))
-    }
-    .attributeModifier(new ButtonFancyModifier(40, 40))
-    .bindMenu(this.SortMenuBuilder, { backgroundBlurStyle: BlurStyle.COMPONENT_ULTRA_THIN })
-    .attributeModifier(new SearchShadowModifier())
-    .transition(XAnimation.getAnimation('right', 0, false))
-  }
-
   @Builder
   SortMenuBuilder() {
     SortComponent({
-      onSortByName: async () => {
+      onSortByName: () => {
         ToolsUtil.sortBy(PathUtils.appContext!, this.videoListController.videoMetaDataList,
           this.videoListController.folder, "name")
-        // ORM 改造：VideoUtils.refresh 已改为异步，必须 await 确保数据库查询完成后再更新 UI
-        await VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
-        this.sortOrder = this.getSortOrder()
+        VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
       },
-      onSortByTime: async () => {
+      onSortByTime: () => {
         ToolsUtil.sortBy(PathUtils.appContext!, this.videoListController.videoMetaDataList,
           this.videoListController.folder, "time")
-        await VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
-        this.sortOrder = this.getSortOrder()
+        VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
       },
-      onSortByDatetime: async () => {
+      onSortByDatetime: () => {
         ToolsUtil.sortBy(PathUtils.appContext!, this.videoListController.videoMetaDataList,
           this.videoListController.folder, "datetime")
-        await VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
-        this.sortOrder = this.getSortOrder()
+        VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
       }
     })
   }
@@ -301,8 +279,7 @@ export struct VideoView {
                 this.fileFolderSource)
             }
           } finally {
-            await VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
-        this.sortOrder = this.getSortOrder()
+            VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
             this.videoListController.closeMultipleChoose()
           }
         })
@@ -352,11 +329,11 @@ export struct VideoView {
     .constraintSize({ minWidth: this.FOLDER_TAB_MIN_WIDTH })
     .borderRadius(16)
     .justifyContent(FlexAlign.Center)
-    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.95 })
-    .onClick(async () => {
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+    .onClick(() => {
       if (this.currentFolderIndex !== index) {
         this.currentFolderIndex = index
-        await this.switchToFolderByIndex(index)
+        this.switchToFolderByIndex(index)
       }
     })
   }
@@ -375,76 +352,49 @@ export struct VideoView {
 
   /**
    * 通过索引切换文件夹
-   * ORM 改造：切换前重新从数据库拉取最新的 folder 与 video 数据，确保手势滑动或点击面包屑后 UI 显示的是最新状态。
    */
   private switchToFolderByIndex(index: number): void {
     // 边界检查
     if (index < 0 || index >= this.file_folder_list.length) {
-      console.error(`[VideoView] switchToFolderByIndex: index ${index} out of bounds, length: ${this.file_folder_list.length}`)
+      salmonLogger.addLog(TAG,
+        `[VideoView] switchToFolderByIndex: index ${index} out of bounds, length: ${this.file_folder_list.length}`,
+        true)
       return
     }
     const folder = this.file_folder_list[index]
     if (!folder) {
-      console.error(`[VideoView] switchToFolderByIndex: folder at index ${index} is undefined`)
+      salmonLogger.addLog(TAG, `[VideoView] switchToFolderByIndex: folder at index ${index} is undefined`, true)
       return
     }
     if (this.videoListController?.folder?.date === folder.date) {
       return
     }
-
-    // 优先检查缓存
-    const cached = this.videoListController.getCachedFolder(folder.date)
-    if (cached && cached.video_list.length > 0) {
-      let filteredVideos = cached.video_list
+    // 保留搜索状态，在新文件夹中应用搜索过滤
+    this.file_folder_list = Preferences.getFileFolder(PathUtils.appContext!)
+    this.fileFolderSource.updateData(this.file_folder_list)
+    const currentFolder = this.fileFolderSource.getFileFolder(folder.name)
+    if (currentFolder) {
+      // 如果有搜索值，在新文件夹中过滤视频
+      let filteredVideos = currentFolder.video_list
       if (this.searchValue.length > 0) {
-        filteredVideos = SelectFileUtil.getItemFromSearch(cached.video_list, this.searchValue)
+        filteredVideos = SelectFileUtil.getItemFromSearch(currentFolder.video_list, this.searchValue)
       }
-      this.videoListController.updateData(new VideoDataSource(filteredVideos), cached)
-      this.scrollToCurrentFolder(index)
-      this.sideBarController.close(true)
-      AppStorage.setOrCreate('scrollToFolderDate', folder.date)
-      return
+      animateToImmediately({
+        duration: 200,
+        curve: Curve.EaseInOut
+      }, () => {
+        this.videoListController.videoDataSource.updateData(filteredVideos)
+        this.videoListController.updateData(
+          this.videoListController.videoDataSource,
+          currentFolder
+        )
+      })
     }
-
-    // 缓存未命中：保持当前列表，延迟加载避免阻塞切换动画
-    this.videoListController.startFolderSwitch({ name: folder.name, date: folder.date, video_list: [] })
-
+    // 滚动面包屑使当前文件夹可见
     this.scrollToCurrentFolder(index)
     this.sideBarController.close(true)
+    // 同步 scrollToFolderDate，触发 onFolderChanged 确保状态一致
     AppStorage.setOrCreate('scrollToFolderDate', folder.date)
-
-    setTimeout(() => {
-      this.loadFolderVideosAsync(folder)
-    }, 0)
-  }
-
-  private async loadFolderVideosAsync(folder: FileFolder): Promise<void> {
-    let videos: VideoMetadata[] = []
-    if (folder.name) {
-      try {
-        videos = await FileFolderUtil.loadFolderVideosAsync(PathUtils.appContext!, folder.name)
-      } catch (e) {
-        console.error(`[VideoView] Failed to load videos for ${folder.name}: ${e}`)
-      }
-    }
-
-    // 竞态保护：加载完成时若用户已切换到其他文件夹，则不更新数据
-    if (this.videoListController.folder?.date !== folder.date) {
-      console.info(`[VideoView] Folder changed during load, skip updating ${folder.name}`)
-      return
-    }
-
-    let filteredVideos = videos
-    if (this.searchValue.length > 0) {
-      filteredVideos = SelectFileUtil.getItemFromSearch(videos, this.searchValue)
-    }
-
-    const folderWithVideos: FileFolder = { name: folder.name, date: folder.date, video_list: videos }
-    this.videoListController.videoDataSource.updateData(filteredVideos)
-    this.videoListController.updateData(
-      this.videoListController.videoDataSource,
-      folderWithVideos
-    )
   }
 
   /**

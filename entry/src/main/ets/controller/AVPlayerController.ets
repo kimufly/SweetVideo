@@ -1,20 +1,14 @@
 import { media } from '@kit.MediaKit'
 import { avSession, avSession as avSessionManager } from '@kit.AVSessionKit'
-import VideoOperateUtil from '../utils/VideoOperateUtil'
-import { fileIo as fs } from '@kit.CoreFileKit'
-import VideoInfoUtil from '../utils/VideoInfoUtil'
 import { AudioTrack, SubtitleTrack } from '../interfaces/AudioTrackInterface'
-import { VideoStartTimeMode } from '../common/enum/VideoStartTimeMode'
 import ToolsUtil from '../utils/ToolsUtil'
 import { audio } from '@kit.AudioKit'
 import { SubtitleMode } from '../common/enum/SubtitleMode'
-import { PathUtils } from '../utils/PathUtils'
-import SubtitleUtil from '../utils/SubtitleUtil'
 import { VideoMetadata } from '../interfaces/VideoMetadataInterface'
-import SelectFileUtil from '../utils/SelectFileUtil'
 import { SweetRepeatMode } from '../common/enum/SweetRepeatMode'
-import { Setting } from '../utils/ObservedUtil'
 import { PlayerControllerInterface } from './PlayerControllerFactory'
+import { salmonLogger } from 'salmonlogger'
+import { window } from '@kit.ArkUI'
 import {
   AUTO_HIDE_SHOW_CONTROL_TIME,
   IMAGE_ANALYZER_CONFIG,
@@ -22,14 +16,24 @@ import {
   RIGHT_ZONE_DIVISION,
   SCREEN_DIVISIONS
 } from '../common/Constants'
-import { salmonLogger } from 'salmonlogger'
+import { VideoStartTimeMode } from '../common/enum/VideoStartTimeMode'
+import NavigationAddress from '../common/NavigationCommon'
+import Preferences from '../database/Preferences'
 import AVSessionUtil from '../utils/AVSessionUtil'
+import { ThrottleUtil } from '../utils/DebounceUtil'
+import { Setting } from '../utils/ObservedUtil'
+import { PathUtils } from '../utils/PathUtils'
+import PermissionUtil from '../utils/PermissionUtil'
 import PrivacySpaceUtil from '../utils/PrivacySpaceUtil'
 import RecentPlayUtil from '../utils/RecentPlayUtil'
-import PermissionUtil from '../utils/PermissionUtil'
+import SelectFileUtil from '../utils/SelectFileUtil'
+import SubtitleUtil from '../utils/SubtitleUtil'
+import VideoInfoUtil from '../utils/VideoInfoUtil'
+import VideoOperateUtil from '../utils/VideoOperateUtil'
 import { WindowUtil } from '../utils/WindowUtil'
-import { window } from '@kit.ArkUI'
-import NavigationAddress from '../common/NavigationCommon'
+import fileIo from '@ohos.file.fs'
+
+const TAG = 'AVPlayerController'
 
 @Observed
 export class AVPlayerController implements PlayerControllerInterface {
@@ -74,6 +78,9 @@ export class AVPlayerController implements PlayerControllerInterface {
   @Track translateX: number = 0
   @Track translateY: number = 0
   @Track showControl: boolean = false
+  // 视频帧预览节流控制
+  private lastFrameFetchTime: number = 0
+  private readonly FRAME_FETCH_INTERVAL: number = 200 // 200ms 获取一次预览帧
 
   async create() {
     try {
@@ -90,6 +97,13 @@ export class AVPlayerController implements PlayerControllerInterface {
 
   async getFrameByTime(time: number, isFirstFrame: boolean) {
     if (Setting.showFrameImgStatus) {
+      // 时间间隔控制，避免频繁获取视频帧
+      const now = Date.now()
+      if (!isFirstFrame && now - this.lastFrameFetchTime < this.FRAME_FETCH_INTERVAL) {
+        return // 时间间隔太短，跳过
+      }
+      this.lastFrameFetchTime = now
+
       const isUpdating = !VideoOperateUtil.updatePix
       const shouldSkip = isUpdating && !isFirstFrame
       if (shouldSkip) {
@@ -137,7 +151,7 @@ export class AVPlayerController implements PlayerControllerInterface {
           }, 800)
         })
     } catch (error) {
-      console.error('volumeChange error:' + error)
+      salmonLogger.addLog(TAG, 'volumeChange error:' + error, true)
     }
     this.screenBrightness = await VideoOperateUtil.getScreenBrightness()
   }
@@ -146,7 +160,7 @@ export class AVPlayerController implements PlayerControllerInterface {
   async setExternalSubtitle(nowPlaying: VideoMetadata) {
     if (await SubtitleUtil.isSubtitleExist(PathUtils.subtitlePath!, nowPlaying.date!)) {
       try {
-        let subtitle = fs.openSync(PathUtils.subtitlePath! + nowPlaying.date, fs.OpenMode.READ_ONLY)
+        let subtitle = fileIo.openSync(PathUtils.subtitlePath! + nowPlaying.date, fileIo.OpenMode.READ_ONLY)
         await SubtitleUtil.parseSubtitleProcess(subtitle.path, nowPlaying.external_subtitle_format) ?
           this.subtitleSelected = SubtitleMode.EXTERNAL_SUBTITLE : this.subtitleSelected = SubtitleMode.INNER_SUBTITLE
       } catch (error) {
@@ -194,11 +208,12 @@ export class AVPlayerController implements PlayerControllerInterface {
   }
 
   updatePlaybackSpeed(speed: number): void {
-    if (!VideoInfoUtil.videoSpeedListAll.includes(speed)) {
-      speed = 1.0
+    try {
+      this.avPlayer?.setPlaybackRate(speed)
+    } catch (error) {
+      salmonLogger.addLog(TAG, 'updatePlaybackSpeed error:' + error, true)
+      ToolsUtil.showToast('播放速度更新失败')
     }
-    const systemSpeed = VideoInfoUtil.mapToSystemSpeed(speed)
-    this.avPlayer?.setSpeed(systemSpeed)
   }
 
   async getAudioTrackList() {
@@ -258,6 +273,7 @@ export class AVPlayerController implements PlayerControllerInterface {
   setListenVideoStatus() {
     this.avPlayer?.setMediaMuted(media.MediaType.MEDIA_TYPE_VID, this.isListenVideo)?.catch(() => {
       ToolsUtil.addLogger('设置听视频失败', true)
+      this.isListenVideo = false
     })
     ToolsUtil.addLogger(`视频听视频设置为：${this.isListenVideo}`, false)
   }
@@ -266,7 +282,7 @@ export class AVPlayerController implements PlayerControllerInterface {
     this.avPlayer?.off('subtitleUpdate')
     this.avPlayer?.off('timeUpdate')
     this.avPlayer?.off('seekDone')
-    this.avPlayer?.off('speedDone')
+    this.avPlayer?.off('playbackRateDone')
     this.avPlayer?.off('audioOutputDeviceChangeWithInfo')
     this.avPlayer?.off('subtitleUpdate')
     this.avPlayer?.off('stateChange')
@@ -387,17 +403,28 @@ export class AVPlayerController implements PlayerControllerInterface {
   async playChooseVideo(item: VideoMetadata, pathStack: NavPathStack,
     windowClass?: Promise<window.Window | undefined>) {
     ToolsUtil.addLogger("开始播放选择的视频", false)
-    // ORM 改造：保存播放进度和添加最近记录均已异步化，必须在切歌前 await 确保数据落库，
-    // 防止用户快速切歌或应用退后台时丢失上一条播放记录。
-    await VideoOperateUtil.saveVideoTime(this.playTime, this.nowPlaying!, this.videoMetaDataList, PathUtils.appContext!)
+    VideoOperateUtil.saveVideoTime(this.playTime, this.nowPlaying!, this.videoMetaDataList, PathUtils.appContext!)
     if (!PrivacySpaceUtil.getPrivacyMode()) {
-      await RecentPlayUtil.addPlayback(PathUtils.appContext!, item)
+      RecentPlayUtil.addPlayback(PathUtils.appContext!, item)
       ToolsUtil.addLogger("添加到最近播放记录完成", false)
     }
     this.avPlayer?.off('subtitleUpdate')
     this.reset()
     this.nowPlaying = item as VideoMetadata
     ToolsUtil.addLogger("设置当前播放视频完成", false)
+
+    // 更新播放列表数据，确保使用最新的数据
+    if (!PrivacySpaceUtil.getPrivacyMode()) {
+      const folders = Preferences.getFileFolder(PathUtils.appContext!)
+      const currentFolder = folders.find(f =>
+      f.video_list.some(v => v.date === item.date)
+      )
+      if (currentFolder) {
+        this.videoMetaDataList = currentFolder.video_list
+        ToolsUtil.addLogger("更新播放列表数据完成", false)
+      }
+    }
+
     this.getData(pathStack!, windowClass!)
     ToolsUtil.addLogger("获取播放数据完成", false)
     await this.initAVSession()
@@ -410,7 +437,7 @@ export class AVPlayerController implements PlayerControllerInterface {
       if (this.avPlayer) {
         try {
           await PermissionUtil.activatePermission(this.nowPlaying?.uri)
-          this.avPlayer.fdSrc = fs.openSync(this.nowPlaying?.uri)
+          this.avPlayer.fdSrc = fileIo.openSync(this.nowPlaying?.uri)
         } catch (error) {
           ToolsUtil.addLogger("打开视频文件失败：" + error, true)
           ToolsUtil.showToast('视频打开失败，可能已失效：' + error)
@@ -537,8 +564,11 @@ export class AVPlayerController implements PlayerControllerInterface {
   setPlayerCallback(pathStack: NavPathStack, xComponentController?: XComponentController,
     windowClass?: Promise<window.Window | undefined>) {
     this.avPlayer?.on('timeUpdate', async (duration) => {
+      // 使用节流控制播放进度更新频率，降低UI重渲染开销
       if (!this.onSwiping) {
-        this.playTime = duration
+        ThrottleUtil.throttle('playTime', () => {
+          this.playTime = duration
+        }, 100)
       }
       AppStorage.setOrCreate('nowPlayingData',
         [this.playTime, this.nowPlaying!, this.videoMetaDataList])
@@ -585,9 +615,8 @@ export class AVPlayerController implements PlayerControllerInterface {
       }
     })
 
-    this.avPlayer?.on('speedDone', (systemEnum: media.PlaybackSpeed) => {
-      const actualSpeed = VideoInfoUtil.mapFromSystemSpeed(systemEnum)
-      this.speed = actualSpeed
+    this.avPlayer?.on('playbackRateDone', (rate: number) => {
+      this.speed = rate
     })
 
     this.avPlayer?.on('audioOutputDeviceChangeWithInfo', (data: audio.AudioStreamDeviceChangeInfo) => {
@@ -632,11 +661,6 @@ export class AVPlayerController implements PlayerControllerInterface {
           VideoOperateUtil.saveVideoTime(this.playTime, this.nowPlaying!, this.videoMetaDataList,
             PathUtils.appContext!)
           ToolsUtil.addLogger("保存视频播放时间完成", false, pathStack)
-          const targetItem = this.videoMetaDataList.find(i => i.date == this.nowPlaying?.date)
-          if (targetItem) {
-            targetItem!.last_play = this.playTime
-            ToolsUtil.addLogger("更新当前视频最后播放时间完成", false, pathStack)
-          }
           if (this.repeatMode === SweetRepeatMode.SINGLE) {
             ToolsUtil.addLogger("单曲循环模式，重新开始播放", false, pathStack)
             this.play()

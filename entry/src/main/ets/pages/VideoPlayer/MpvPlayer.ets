@@ -17,8 +17,6 @@ import { LockVideoBarComponent } from '../../component/PlayerComponent/LockVideo
 import { GestureComponent } from '../../component/PlayerComponent/GestureComponent'
 import VideoInfoUtil from '../../utils/VideoInfoUtil'
 import ToolsUtil from '../../utils/ToolsUtil'
-import PrivacySpaceUtil from '../../utils/PrivacySpaceUtil'
-import RecentPlayUtil from '../../utils/RecentPlayUtil'
 import { window } from '@kit.ArkUI'
 import { Subtitle3DMode } from '../../common/enum/SubtitleMode'
 import { XComponents } from '../../component/PlayerComponent/XComponents'
@@ -42,6 +40,10 @@ import {
 import { AISubtitleComponent } from '../../component/PlayerComponent/AIAsrComponent'
 import { PlayerSideBarComponent } from '../../component/PlayerComponent/PlayerSideBarComponent'
 import PiPWindowUtil from '../../utils/PiPWindowUtil'
+import { DefaultDialogShadow } from '../../common/AttributeModifierConfig'
+import { NumberInputDialog } from '../../component/Dialog/NumberInputDialog'
+import { salmonLogger } from 'salmonlogger'
+import { SweetRepeatMode } from '../../common/enum/SweetRepeatMode'
 import { AudioTrackComponent } from '../../component/PlayerComponent/AudioTrackComponent'
 import { AVCastPickerBuilder } from '../../component/PlayerComponent/AVCastPickerBuilder'
 import { PlaybackSpeedMenuComponent } from '../../component/PlayerComponent/PlaybackSpeedComponent'
@@ -50,10 +52,9 @@ import { VideoButtonsComponent } from '../../component/PlayerComponent/VideoButt
 import { VideoSettingComponent } from '../../component/PlayerComponent/VideoSettingComponent'
 import { VideoSliderComponent } from '../../component/PlayerComponent/VideoSliderComponent'
 import { VideoTopComponent } from '../../component/PlayerComponent/VideoTopComponent'
-import { SweetRepeatMode } from '../../common/enum/SweetRepeatMode'
-import { DefaultDialogShadow } from '../../common/AttributeModifierConfig'
-import { NumberInputDialog } from '../../component/Dialog/NumberInputDialog'
 import Preferences from '../../database/Preferences'
+
+const TAG = 'MpvPlayer'
 
 @Component
 export struct MpvPlayer {
@@ -92,7 +93,7 @@ export struct MpvPlayer {
       WindowUtil.setKeepScreenStatus(PathUtils.appContext!, true)
       WindowUtil.setBarState(PathUtils.appContext!, false, false)
     } catch (error) {
-      console.error('setPreferredOrientation error:' + error)
+      salmonLogger.addLog(TAG, 'setPreferredOrientation error:' + error, true)
     }
     this.mpv.repeatMode = Preferences.getRepeatModeState(PathUtils.appContext!)
     const videoSpeed = Preferences.getVideoSpeed(PathUtils.appContext!)
@@ -106,8 +107,7 @@ export struct MpvPlayer {
     WindowUtil.recoveryBarColor()
     AppStorage.delete('nowPlayingData')
     clearTimeout(this.exitVideoTime)
-    Preferences.saveVideoSpeed(PathUtils.appContext!,
-      (VideoInfoUtil.videoSpeedListAll.includes(this.mpv.speed) ? this.mpv.speed : 1) + 'x')
+    Preferences.saveVideoSpeed(PathUtils.appContext!, this.mpv.speed + 'x')
     Preferences.saveRepeatModeState(PathUtils.appContext!, this.mpv.repeatMode)
     try {
       this.mpv.audioVolumeManager?.off('streamVolumeChange')
@@ -144,15 +144,11 @@ export struct MpvPlayer {
               await PermissionUtil.activatePermission(this.mpv.nowPlaying?.uri)
               try {
                 this.mpv.init(this.mpv.nowPlaying!.uri, this.pathStack)
-                // 从首页进入播放器时，在此处添加最近播放记录（playChooseVideo 仅处理播放器内切歌）
-                if (Setting.recentPlay && this.mpv.nowPlaying && !PrivacySpaceUtil.getPrivacyMode()) {
-                  await RecentPlayUtil.addPlayback(PathUtils.appContext!, this.mpv.nowPlaying)
-                }
                 await this.mpv.initAVSession()
                 PiPWindowUtil.createPipController(this.xComponentController, this.mpv)
                 this.mpv.surfaceId = this.xComponentController.getXComponentSurfaceId()
               } catch (error) {
-                console.error('uri error:' + error)
+                salmonLogger.addLog(TAG, 'uri error:' + error, true)
               }
             },
             onKeyCodeEscape: () => {
@@ -215,10 +211,14 @@ export struct MpvPlayer {
           VolumeSwipingPanelBuilder({
             videoVolume: this.mpv.volume,
             videoVolumeShow: this.mpv.volumeActually,
-            onSwipingVoice: this.mpv.onSwipingVoice
+            onSwipingVoice: this.mpv.onSwipingVoice,
+            playAreaHeight: VideoInfoUtil.playAreaHeight,
           })
           if (this.mpv.onSwipingBrightness) {
-            BrightnessSwipingBuilder({ screenBrightness: this.mpv.screenBrightness })
+            BrightnessSwipingBuilder({
+              screenBrightness: this.mpv.screenBrightness,
+              playAreaHeight: VideoInfoUtil.playAreaHeight
+            })
           }
           if (this.mpv.lockVisibility) {
             LockVideoBarComponent({
@@ -380,6 +380,11 @@ export struct MpvPlayer {
       .sideBarPosition(SideBarPosition.End)
       .divider({ strokeWidth: 0 })
     }
+    .onShown(() => {
+      if (PiPWindowUtil.pipOpenState) {
+        PiPWindowUtil.stopPip()
+      }
+    })
     .onReady(() => {
       const playerParams: PlayerParams =
         this.pathStack.getParamByName(NavigationAddress.MPV_PLAYER)[0] as PlayerParams
@@ -387,14 +392,13 @@ export struct MpvPlayer {
         this.mpv.nowPlaying = playerParams.metadata as VideoMetadata
         this.mpv.videoMetaDataList = playerParams.metadata_list as VideoMetadata[]
       } catch (e) {
-        console.error(e)
+        salmonLogger.addLog(TAG, String(e), true)
       }
     })
     .onWillDisappear(async () => {
       this.exitVideo(false)
       if (this.mpv.videoMetaDataList.length > 0 && this.mpv.playTime > 0) {
-        // ORM 改造：页面退出时异步保存播放进度
-        await VideoOperateUtil.saveVideoTime(this.mpv.playTime, this.mpv.nowPlaying!, this.mpv.videoMetaDataList,
+        VideoOperateUtil.saveVideoTime(this.mpv.playTime, this.mpv.nowPlaying!, this.mpv.videoMetaDataList,
           PathUtils.appContext!)
       }
       PermissionUtil.applyStopContinuousTask()
@@ -585,9 +589,9 @@ export struct MpvPlayer {
         ToolsUtil.showToast('功能暂不可用')
       },
       captureScreen: () => {
-        console.error('test' + this.mpv.surfaceId)
+        salmonLogger.addLog(TAG, 'test' + this.mpv.surfaceId, true)
         if (this.mpv.surfaceId) {
-          console.error('test')
+          salmonLogger.addLog(TAG, 'test', true)
           VideoOperateUtil.saveCaptureScreenToAlbum(this.mpv.surfaceId)
         }
       },

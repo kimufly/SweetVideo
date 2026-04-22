@@ -1,5 +1,5 @@
 import { ButtonFancyModifier, SymbolGlyphFancyModifier } from '../../common/AttributeModifierConfig'
-import { SCALE_FACTORS, SCREEN_EXTEND_LIST } from '../../common/Constants'
+import { SCREEN_EXTEND_LIST, SCALE_FACTORS } from '../../common/Constants'
 import { AVPlayerController } from '../../controller/AVPlayerController'
 import { MpvController } from '../../controller/MpvController/MpvController'
 import VideoInfoUtil from '../../utils/VideoInfoUtil'
