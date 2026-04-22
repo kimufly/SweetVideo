@@ -59,9 +59,9 @@ import { DefaultDialogShadow } from '../../common/AttributeModifierConfig'
 import { NumberInputDialog } from '../../component/Dialog/NumberInputDialog'
 import { SubtitleOffsetDialog } from '../../component/Dialog/SubtitleOffsetDialog'
 
-@Component
+@ComponentV2
 export struct Player { // 播放页
-  @Provide('player') player: AVPlayerController = PlayerControllerFactory.createAVPlayerController()
+  @Provider('player') player: AVPlayerController = PlayerControllerFactory.createAVPlayerController()
   personalScreenExtendDialog: CustomDialogController = new CustomDialogController({
     builder: NumberInputDialog({
       title: '自定义屏幕拓展比例',
@@ -76,18 +76,18 @@ export struct Player { // 播放页
       },
     }), cornerRadius: 20, shadow: DefaultDialogShadow
   })
-  @State lockRotation: boolean = false
+  @Local lockRotation: boolean = false
   xComponentController: XComponentController = new XComponentController()
   windowClass = WindowUtil.getWindow()
-  @State sideBarStatusTmp: Visibility = Visibility.Hidden
-  @State sideBarStatus: boolean = false
-  @State isAIAsrShown: boolean = false
-  @State currentSpeedIndex: number = 0
-  @State subtitleVisibility: Visibility = Visibility.Visible
-  @State @Watch('onSubtitle3DModeChanged') subtitle3DMode: Subtitle3DMode = Subtitle3DMode.DISABLED
-  @Consume('pathStack') pathStack: NavPathStack
-  @State exitVideoTime: number = 0
-  @State isAdjustingSubtitleOffset: boolean = false
+  @Local sideBarStatusTmp: Visibility = Visibility.Hidden
+  @Local sideBarStatus: boolean = false
+  @Local isAIAsrShown: boolean = false
+  @Local currentSpeedIndex: number = 0
+  @Local subtitleVisibility: Visibility = Visibility.Visible
+  @Local subtitle3DMode: Subtitle3DMode = Subtitle3DMode.DISABLED
+  @Consumer('pathStack') pathStack: NavPathStack = new NavPathStack()
+  @Local exitVideoTime: number = 0
+  @Local isAdjustingSubtitleOffset: boolean = false
   subtitleTimestampInputDialog: CustomDialogController = new CustomDialogController({
     builder: SubtitleOffsetDialog({
       getCurrentValue: () => SubtitleUtil.offsetMillis,
@@ -183,7 +183,9 @@ export struct Player { // 播放页
       SideBarContainer(SideBarContainerType.Overlay) {
         PlayerSideBarComponent({
           sideBarStatusTmp: this.sideBarStatusTmp,
+          onSideBarStatusTmpChange: (v: Visibility) => { this.sideBarStatusTmp = v },
           sideBarStatus: this.sideBarStatus,
+          onSideBarStatusChange: (v: boolean) => { this.sideBarStatus = v },
           onItemClick: (item: VideoMetadata) => {
             this.player.playChooseVideo(item, this.pathStack, this.windowClass)
             this.player.setPlayerCallback(this.pathStack, this.xComponentController, this.windowClass)
@@ -440,6 +442,7 @@ export struct Player { // 播放页
 
           AISubtitleComponent({
             isAIAsrShown: this.isAIAsrShown,
+            player: this.player,
           })
         }.onAreaChange((_oldValue: Area, newValue: Area) => {
           this.player.screenWidth = Math.floor(new Number(newValue.width).valueOf())
@@ -647,7 +650,9 @@ export struct Player { // 播放页
         this.PlaybackSpeedMenuBuilder()
       },
       sideBarStatusTmp: this.sideBarStatusTmp,
+      onSideBarStatusTmpChange: (v: Visibility) => { this.sideBarStatusTmp = v },
       sideBarStatus: this.sideBarStatus,
+      onSideBarStatusChange: (v: boolean) => { this.sideBarStatus = v },
       onScreenRotationOrFullScreenClick: async () => {
         VideoOperateUtil.fullScreenOrRotateScreen(this.player.screenWidth, this.player.screenHeight, this.windowClass)
       },
@@ -747,6 +752,7 @@ export struct Player { // 播放页
       subtitleVisibility: this.subtitleVisibility,
       isAIAsrShown: this.isAIAsrShown,
       subtitle3DMode: this.subtitle3DMode,
+      onSubtitle3DModeChange: (v: Subtitle3DMode) => { this.subtitle3DMode = v },
       onSubtitleOffClick: () => {
         this.turnOffSubtitleDisplay()
       },
@@ -858,6 +864,7 @@ export struct Player { // 播放页
     this.saveSubtitlePreferenceForCurrentVideo()
   }
 
+  @Monitor('subtitle3DMode')
   private onSubtitle3DModeChanged(): void {
     if (this.isApplyingSubtitleMetadata) {
       return
