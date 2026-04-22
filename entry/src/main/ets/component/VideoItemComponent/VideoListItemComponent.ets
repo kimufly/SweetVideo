@@ -7,6 +7,7 @@ import { VideoListController } from './VideoItemComponent'
 import { VideoInfoBuilder } from './VideoInfoBuilder'
 import { Setting } from '../../utils/ObservedUtil'
 import { CoverLayoutMode } from '../../common/enum/DisplayMode'
+import { coverEventBus, CoverUpdateEvent } from '../../utils/CoverEventUtil'
 
 @ReusableV2
 @ComponentV2
@@ -15,11 +16,32 @@ export default struct VideoListItem {
   @Consumer() videoListController: VideoListController = new VideoListController()
   @Local choose: boolean = false
   @Param delMultipleList: VideoMetadata[] = []
+  @Local coverUri: string = ''
+  private unsubscribeCoverEvent: (() => void) | null = null
+
+  @Monitor('item')
+  onItemChange() {
+    this.coverUri = fileUri.getUriFromPath(PathUtils.coverPath + this.item.date)
+  }
+
+  aboutToAppear(): void {
+    this.coverUri = fileUri.getUriFromPath(PathUtils.coverPath + this.item.date)
+    this.unsubscribeCoverEvent = coverEventBus.on('coverReady', (event: CoverUpdateEvent) => {
+      if (event.date === this.item.date) {
+        this.coverUri = fileUri.getUriFromPath(PathUtils.coverPath + this.item.date) + '?t=' + Date.now()
+      }
+    })
+  }
+
+  aboutToDisappear(): void {
+    this.unsubscribeCoverEvent?.()
+  }
 
   // 组件复用时的生命周期回调
   aboutToReuse(): void {
     // 组件复用时，重置选择状态
     this.choose = this.delMultipleList.some(item => item.date === this.item.date)
+    this.coverUri = fileUri.getUriFromPath(PathUtils.coverPath + this.item.date)
   }
 
   checkChoose() {
@@ -28,7 +50,7 @@ export default struct VideoListItem {
 
   build() {
     Row() {
-      Image(fileUri.getUriFromPath(PathUtils.coverPath + this.item.date))
+      Image(this.coverUri)
         .attributeModifier(new ImageFancyModifier(16, Setting.coverLayout === CoverLayoutMode.VERTICAL_PLATE ? 75 : 100,
           Setting.coverLayout === CoverLayoutMode.VERTICAL_PLATE ? 100 : 75))
       Column() {

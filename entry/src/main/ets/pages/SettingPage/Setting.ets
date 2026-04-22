@@ -156,18 +156,6 @@ export struct SettingsPage { //设置页
         }
 
         ListItem() {
-          SettingsToggleItem({
-            symbol: $r('sys.symbol.folder'),
-            message: '开启面包屑',
-            enable: Setting.showToast,
-            onChange: (checked: boolean) => {
-              Setting.showToast = checked
-              Preferences.saveShowToast(PathUtils.appContext!, Setting.showToast)
-            }
-          })
-        }
-
-        ListItem() {
           Column() {
             Markdown({
               controller: this.controller,

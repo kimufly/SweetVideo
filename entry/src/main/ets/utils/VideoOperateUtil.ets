@@ -236,44 +236,39 @@ export default class VideoOperateUtil {
   }
 
   // 保存视频播放进度
-  static saveVideoTime(play_time: number, nowPlaying: VideoMetadata,
-    videoMetaData: VideoMetadata[], context: Context) {
+  // ORM 改造：saveVideoTime 仅负责保存播放进度，最近播放记录的添加由 playChooseVideo 统一处理，
+  // 避免 saveVideoTime 在 onWillDisappear/completed 等多处被调用时重复添加最近播放记录。
+  static async saveVideoTime(play_time: number, nowPlaying: VideoMetadata,
+    videoMetaData: VideoMetadata[], context: Context): Promise<void> {
     // 保存文件数据
-    SelectFileUtil.saveData(context, nowPlaying!, { playTime: play_time })
-    if (Setting.recentPlay && !PrivacySpaceUtil.getPrivacyMode() &&
-      !SelectFileUtil.isPathFromSource(nowPlaying.uri, VideoSource.PRIVACY_SPACE)) { // 最近播放开启且非隐私空间视频则添加到最近播放
-      const meta = videoMetaData.find(i => i.date == nowPlaying?.date)
-      if (meta) {
-        RecentPlayUtil.addPlayback(context, meta)
-      }
-    }
+    await SelectFileUtil.saveData(context, nowPlaying!, { playTime: play_time })
   }
 
   // 保存视频片头时间
-  static saveVideoStartTime(startTime: number, nowPlaying: VideoMetadata, context: Context) {
-    SelectFileUtil.saveData(context, nowPlaying, { startTime: startTime })
+  static async saveVideoStartTime(startTime: number, nowPlaying: VideoMetadata, context: Context): Promise<void> {
+    await SelectFileUtil.saveData(context, nowPlaying, { startTime: startTime })
   }
 
   // 保存视频片尾时间
-  static saveVideoEndTime(endTime: number, nowPlaying: VideoMetadata, context: Context) {
-    SelectFileUtil.saveData(context, nowPlaying, { endTime: endTime })
+  static async saveVideoEndTime(endTime: number, nowPlaying: VideoMetadata, context: Context): Promise<void> {
+    await SelectFileUtil.saveData(context, nowPlaying, { endTime: endTime })
   }
 
   // 保存音视频宽高信息
-  static saveVideoWeightAndHeight(context: Context, nowPlaying: VideoMetadata) {
-    SelectFileUtil.saveData(context, nowPlaying!, { size: nowPlaying.size })
+  static async saveVideoWeightAndHeight(context: Context, nowPlaying: VideoMetadata): Promise<void> {
+    await SelectFileUtil.saveData(context, nowPlaying!, { size: nowPlaying.size })
   }
 
-  static saveVideoTotalTime(context: Context, nowPlaying: VideoMetadata) {
-    SelectFileUtil.saveData(context, nowPlaying!, { totalTime: nowPlaying.time })
+  static async saveVideoTotalTime(context: Context, nowPlaying: VideoMetadata): Promise<void> {
+    await SelectFileUtil.saveData(context, nowPlaying!, { totalTime: nowPlaying.time })
   }
 
-  static saveVideoPointA(context: Context, nowPlaying: VideoMetadata, pointA?: number) {
-    SelectFileUtil.saveData(context, nowPlaying!, { pointA: pointA })
+  static async saveVideoPointA(context: Context, nowPlaying: VideoMetadata, pointA?: number): Promise<void> {
+    await SelectFileUtil.saveData(context, nowPlaying!, { pointA: pointA })
   }
 
-  static saveVideoPointB(context: Context, nowPlaying: VideoMetadata, pointB?: number) {
-    SelectFileUtil.saveData(context, nowPlaying!, { pointB: pointB })
+  static async saveVideoPointB(context: Context, nowPlaying: VideoMetadata, pointB?: number): Promise<void> {
+    await SelectFileUtil.saveData(context, nowPlaying!, { pointB: pointB })
   }
 
   static saveLastPlayVideoIndex(list: VideoMetadata[], date: string | undefined) {

@@ -356,7 +356,7 @@ export struct PrivacySpace { // 隐私空间页
       ? SelectFileUtil.getItemFromSearch(this.allVideos, this.searchValue)
       : this.allVideos
     this.videoDataSource.updateData(this.video_meta_data_encryption)
-    await SelectFileUtil.deletePrivacyVideo(date, title, this.allVideos)
+    await SelectFileUtil.deletePrivacyVideo(date, title)
   }
 
   @Builder

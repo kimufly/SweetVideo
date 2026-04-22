@@ -278,4 +278,29 @@ export default class Preferences {
   static getSuperResolutionState(context: Context): boolean {
     return PreferencesUtil.getPreferencesValue(context, DATA_BASE_NAME, 'superResolutionState', false) as boolean
   }
+
+  private static readonly VIDEO_SORT_NORMAL_KEY = 'video_sort_normal'
+  private static readonly VIDEO_SORT_PRIVACY_KEY = 'video_sort_privacy'
+  private static readonly VIDEO_SORT_NORMAL_ORDER_KEY = 'video_sort_normal_order'
+  private static readonly VIDEO_SORT_PRIVACY_ORDER_KEY = 'video_sort_privacy_order'
+
+  static getVideoSortType(context: Context, isPrivacy: boolean = false): 'name' | 'datetime' | 'time' {
+    const key = isPrivacy ? Preferences.VIDEO_SORT_PRIVACY_KEY : Preferences.VIDEO_SORT_NORMAL_KEY
+    return PreferencesUtil.getPreferencesValue(context, DATA_BASE_NAME, key, 'name') as 'name' | 'datetime' | 'time'
+  }
+
+  static saveVideoSortType(context: Context, sortType: 'name' | 'datetime' | 'time', isPrivacy: boolean = false): void {
+    const key = isPrivacy ? Preferences.VIDEO_SORT_PRIVACY_KEY : Preferences.VIDEO_SORT_NORMAL_KEY
+    PreferencesUtil.putPreferencesValue(context, DATA_BASE_NAME, key, sortType)
+  }
+
+  static getVideoSortOrder(context: Context, isPrivacy: boolean = false): 'asc' | 'desc' {
+    const key = isPrivacy ? Preferences.VIDEO_SORT_PRIVACY_ORDER_KEY : Preferences.VIDEO_SORT_NORMAL_ORDER_KEY
+    return PreferencesUtil.getPreferencesValue(context, DATA_BASE_NAME, key, 'desc') as 'asc' | 'desc'
+  }
+
+  static saveVideoSortOrder(context: Context, order: 'asc' | 'desc', isPrivacy: boolean = false): void {
+    const key = isPrivacy ? Preferences.VIDEO_SORT_PRIVACY_ORDER_KEY : Preferences.VIDEO_SORT_NORMAL_ORDER_KEY
+    PreferencesUtil.putPreferencesValue(context, DATA_BASE_NAME, key, order)
+  }
 }

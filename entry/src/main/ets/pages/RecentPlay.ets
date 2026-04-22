@@ -28,7 +28,7 @@ export struct RecentPlay { // 最近播放页
 
   async aboutToAppear(): Promise<void> {
     if (Setting.recentPlay) {
-      this.recent_video_meta_data = RecentPlayUtil.getRecentPlaybacks()
+      this.recent_video_meta_data = await RecentPlayUtil.getRecentPlaybacks()
       this.videoDataSource = new VideoDataSource(this.recent_video_meta_data)
     }
   }
@@ -85,9 +85,11 @@ export struct RecentPlay { // 最近播放页
     }
     const isFileExist = await SelectFileUtil.isFileExist(item.uri, true)
     if (isFileExist) {
-      const originalList = SelectFileUtil.getVideoListByVideoDate(item.date)
-      if (originalList[1].length > 0 && originalList[0]) {
-        await ToolsUtil.routerWhere(this.pathStack, choosePlayer, originalList[0], originalList[1])
+      const originalList = await SelectFileUtil.getVideoListByVideoDate(item.date)
+      const targetVideo = originalList[0]
+      const videoList = originalList[1]
+      if (videoList.length > 0 && targetVideo) {
+        await ToolsUtil.routerWhere(this.pathStack, choosePlayer, targetVideo, videoList)
       } else {
         ToolsUtil.showToast('数据异常，已移除该数据')
         this.delData(PathUtils.appContext!, item)
@@ -170,9 +172,9 @@ export struct RecentPlay { // 最近播放页
         .cachedCount(3)
       }
     }
-    .onShown(() => {
+    .onShown(async () => {
       if (Setting.recentPlay) {
-        this.recent_video_meta_data = RecentPlayUtil.getRecentPlaybacks()
+        this.recent_video_meta_data = await RecentPlayUtil.getRecentPlaybacks()
         this.videoDataSource.updateData(this.recent_video_meta_data)
       }
     })

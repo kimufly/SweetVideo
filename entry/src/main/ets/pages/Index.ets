@@ -1,5 +1,5 @@
 import DataSyncUtil from '../utils/DataSyncUtil'
-import { FileFolderDataSource } from '../utils/DataUtil'
+import { FileFolderDataSource, VideoDataSource } from '../utils/DataUtil'
 import { AddFileFolderNameDialog } from '../component/Dialog/AddFileFolderNameDialog'
 import FileFolderUtil from '../utils/FileFolderUtil'
 import { EditFileFolderNameDialog } from '../component/Dialog/EditFileFolderNameDialog'
@@ -108,7 +108,7 @@ struct Index {
               })
             )
             this.videoListController.closeMultipleChoose()
-            this.file_folder_list = FileFolderUtil.deleteFileFolder(PathUtils.appContext!, folder)
+            this.file_folder_list = await FileFolderUtil.deleteFileFolder(PathUtils.appContext!, folder)
             let newFolder: FileFolder | undefined
             if (this.videoListController.folder?.date === folder.date) {
               newFolder = this.file_folder_list[0]
@@ -116,7 +116,7 @@ struct Index {
               newFolder = this.videoListController.folder
             }
             this.videoListController.folder = newFolder
-            VideoUtils.refresh(this.videoListController, this.fileFolderSource, newFolder)
+            await VideoUtils.refresh(this.videoListController, this.fileFolderSource, newFolder)
           },
         },
         {
@@ -169,7 +169,7 @@ struct Index {
     // 从播放器返回时刷新数据源，确保播放进度更新
     const currentFolder = this.videoListController.folder
     if (currentFolder) {
-      const updatedFolders = Preferences.getFileFolder(PathUtils.appContext!)
+      const updatedFolders = await FileFolderUtil.getAllFolderAsync(PathUtils.appContext!)
       const updatedFolder = updatedFolders.find(f => f.name === currentFolder.name)
       if (updatedFolder) {
         // 使用增量更新而不是全量重载
@@ -185,14 +185,33 @@ struct Index {
     VideoOperateUtil.initSetting(PathUtils.appContext!)
     VideoMetaDataOperator.migrationRootVideoMetaToRootFolder()
     FileFolderUtil.fileFolderExistCheck()
-    this.file_folder_list = Preferences.getFileFolder(PathUtils.appContext!)
+
+    // 启动优化：先轻量加载文件夹元数据（不加载视频），解决大文件夹启动卡顿
+    this.loading = true
+    let folders = await FileFolderUtil.getFolderListAsync(PathUtils.appContext!)
     // 首次安装时如果没有文件夹，创建默认"首页"文件夹
-    if (this.file_folder_list.length === 0) {
-      this.file_folder_list = await FileFolderUtil.createNewFolder(PathUtils.appContext!, '首页')
+    if (folders.length === 0) {
+      folders = await FileFolderUtil.createNewFolder(PathUtils.appContext!, '首页')
     }
-    this.fileFolderSource?.updateData(this.file_folder_list)
-    this.videoListController?.updateData(undefined, this.file_folder_list[0])
-    checkUriProcess(Preferences.getFileFolder(PathUtils.appContext!), (re: Object) => {
+    this.file_folder_list = folders
+    this.fileFolderSource?.updateData(folders)
+
+    // 异步加载第一个文件夹的视频（不阻塞 UI 渲染）
+    if (folders.length > 0 && folders[0].name) {
+      try {
+        const videos = await FileFolderUtil.loadFolderVideosAsync(PathUtils.appContext!, folders[0].name)
+        const folderWithVideos: FileFolder = { name: folders[0].name, date: folders[0].date, video_list: videos }
+        this.videoListController?.updateData(new VideoDataSource(videos), folderWithVideos)
+      } catch (e) {
+        salmonLogger.addLog(TAG, `[Index] Failed to load initial folder videos: ${e}`, true)
+        this.videoListController?.updateData(undefined, folders[0])
+      }
+    }
+    this.loading = false
+
+    // checkUriProcess 需要全量数据（含 video_list）来校验文件是否存在
+    const allFolders = await FileFolderUtil.getAllFolderAsync(PathUtils.appContext!)
+    checkUriProcess(allFolders, (re: Object) => {
       const result = re as Array<VideoMetadata>
       if (result.length > 0) {
         // 在主线程中清理资源（字幕、历史记录、封面）
@@ -209,13 +228,13 @@ struct Index {
         })
 
         // 删除视频并刷新列表
-        setTimeout(() => {
-          result.forEach(async item => {
+        setTimeout(async () => {
+          for (const item of result) {
             await this.videoListController.videoDataSource?.deleteUnExistFile(item, this.videoListController,
               this.fileFolderSource)
-          })
+          }
           const targetFolder = this.videoListController.folder ?? this.file_folder_list[0]
-          const updatedFolders = VideoUtils.refresh(this.videoListController, this.fileFolderSource, targetFolder)
+          const updatedFolders = await VideoUtils.refresh(this.videoListController, this.fileFolderSource, targetFolder)
           // 更新文件夹列表状态，确保面包屑等UI正确刷新
           this.file_folder_list = updatedFolders
 
@@ -263,7 +282,7 @@ struct Index {
     } finally {
       this.loading = false
       const targetFolder = this.videoListController.folder ?? this.file_folder_list[0]
-      const updatedFolders = VideoUtils.refresh(this.videoListController, this.fileFolderSource, targetFolder)
+      const updatedFolders = await VideoUtils.refresh(this.videoListController, this.fileFolderSource, targetFolder)
       // 更新文件夹列表状态，确保面包屑等UI正确刷新
       this.file_folder_list = updatedFolders
     }
@@ -330,14 +349,38 @@ struct Index {
                     if (this.videoListController.folder?.date === folder.date) {
                       return
                     }
-                    this.file_folder_list = Preferences.getFileFolder(PathUtils.appContext!)
-                    this.fileFolderSource.updateData(this.file_folder_list)
-                    const currentFolder = this.fileFolderSource.getFileFolder(folder.name)
-                    this.videoListController.videoDataSource.updateData(currentFolder.video_list)
-                    this.videoListController.updateData(this.videoListController.videoDataSource, currentFolder!)
-                    // 同步面包屑选中状态
+
+                    // 优先检查缓存（已加载过的文件夹秒切）
+                    const cached = this.videoListController.getCachedFolder(folder.date)
+                    if (cached && cached.video_list.length > 0) {
+                      this.videoListController.updateData(new VideoDataSource(cached.video_list), cached)
+                      this.scrollToFolderDate = folder.date
+                      this.sideBarController.close(true)
+                      return
+                    }
+
+                    // 缓存未命中：保持当前列表，延迟加载避免阻塞切换动画
+                    this.videoListController.startFolderSwitch({ name: folder.name, date: folder.date, video_list: [] })
                     this.scrollToFolderDate = folder.date
                     this.sideBarController.close(true)
+
+                    setTimeout(async () => {
+                      let videos: VideoMetadata[] = []
+                      if (folder.name) {
+                        try {
+                          videos = await FileFolderUtil.loadFolderVideosAsync(PathUtils.appContext!, folder.name)
+                        } catch (e) {
+                          salmonLogger.addLog(TAG, `[Index] Failed to load videos for ${folder.name}: ${e}`, true)
+                        }
+                      }
+                      // 竞态保护：加载完成时若用户已切换到其他文件夹，则不更新数据
+                      if (this.videoListController.folder?.date !== folder.date) {
+                        return
+                      }
+                      const folderWithVideos: FileFolder = { name: folder.name, date: folder.date, video_list: videos }
+                      this.videoListController.videoDataSource.updateData(videos)
+                      this.videoListController.updateData(this.videoListController.videoDataSource, folderWithVideos)
+                    }, 0)
                   })
                   .bindContextMenu(this.FileFolderSelectMenu(folder), ResponseType.LongPress)
                   .bindContextMenu(this.FileFolderSelectMenu(folder), ResponseType.RightClick)
@@ -529,7 +572,7 @@ struct Index {
           const actualContentWidth = this.screen_width - DataSyncUtil.minContentWidth
           this.videoListController.refresh(actualContentWidth, Setting.listDisplayMode)
           const targetFolder = this.videoListController.folder ?? this.file_folder_list[0]
-          const updatedFolders = VideoUtils.refresh(this.videoListController, this.fileFolderSource, targetFolder)
+          const updatedFolders = await VideoUtils.refresh(this.videoListController, this.fileFolderSource, targetFolder)
           // 更新文件夹列表状态，确保面包屑等UI正确刷新
           this.file_folder_list = updatedFolders
         }
@@ -609,6 +652,7 @@ struct Index {
 
   /**
    * 切换到指定索引的文件夹
+   * 同步切换 + 缓存优先 + 延迟加载，避免手势滑动被阻塞
    */
   private switchToFolder(index: number): void {
     if (index < 0 || index >= this.file_folder_list.length) {
@@ -620,37 +664,55 @@ struct Index {
       return
     }
 
-    // 保留搜索状态，在新文件夹中应用搜索过滤
+    this.clearSearchValue()
 
-    // 刷新文件夹列表（确保数据最新）
-    this.file_folder_list = Preferences.getFileFolder(PathUtils.appContext!)
-    this.fileFolderSource.updateData(this.file_folder_list)
-
-    // 获取目标文件夹的最新数据
-    const currentFolder = this.fileFolderSource.getFileFolder(targetFolder.name)
-    if (currentFolder) {
-      // 如果有搜索值，在新文件夹中过滤视频
-      let filteredVideos = currentFolder.video_list
+    // 优先检查缓存（已加载过的文件夹秒切）
+    const cached = this.videoListController.getCachedFolder(targetFolder.date)
+    if (cached && cached.video_list.length > 0) {
+      let filteredVideos = cached.video_list
       if (this.searchValue.length > 0) {
-        filteredVideos = SelectFileUtil.getItemFromSearch(currentFolder.video_list, this.searchValue)
+        filteredVideos = SelectFileUtil.getItemFromSearch(cached.video_list, this.searchValue)
       }
-      // 添加过渡动画
       animateToImmediately({
         duration: 200,
         curve: Curve.EaseInOut
       }, () => {
-        this.videoListController.videoDataSource.updateData(filteredVideos)
-        this.videoListController.updateData(
-          this.videoListController.videoDataSource,
-          currentFolder
-        )
+        this.videoListController.updateData(new VideoDataSource(filteredVideos), cached)
       })
+      this.scrollToFolderDate = targetFolder.date
+      this.scrollSideBarToFolder(index)
+      return
     }
 
-    // 触发面包屑滚动（为 Task 2 预留）
+    // 缓存未命中：保持当前列表，延迟加载避免阻塞切换动画
+    this.videoListController.startFolderSwitch({ name: targetFolder.name, date: targetFolder.date, video_list: [] })
     this.scrollToFolderDate = targetFolder.date
+    this.scrollSideBarToFolder(index)
 
-    // 滚动侧边栏使当前文件夹可见
+    setTimeout(async () => {
+      let videos: VideoMetadata[] = []
+      if (targetFolder.name) {
+        try {
+          videos = await FileFolderUtil.loadFolderVideosAsync(PathUtils.appContext!, targetFolder.name)
+        } catch (e) {
+          salmonLogger.addLog(TAG, `[Index] Failed to load videos for ${targetFolder.name}: ${e}`, true)
+        }
+      }
+      // 竞态保护：加载完成时若用户已切换到其他文件夹，则不更新数据
+      if (this.videoListController.folder?.date !== targetFolder.date) {
+        return
+      }
+      let filteredVideos = videos
+      if (this.searchValue.length > 0) {
+        filteredVideos = SelectFileUtil.getItemFromSearch(videos, this.searchValue)
+      }
+      const folderWithVideos: FileFolder = { name: targetFolder.name, date: targetFolder.date, video_list: videos }
+      this.videoListController.videoDataSource.updateData(filteredVideos)
+      this.videoListController.updateData(this.videoListController.videoDataSource, folderWithVideos)
+    }, 0)
+  }
+
+  private scrollSideBarToFolder(index: number): void {
     // 估算位置：AppInfoBuilder(100) + 导入按钮(60) + 添加文件夹按钮(60) + 间距(40) = 260
     // 文件夹列表从约 260vp 开始，每个文件夹 70vp
     const estimatedOffset = index > 0 ? 260 + (index - 1) * 70 : 0

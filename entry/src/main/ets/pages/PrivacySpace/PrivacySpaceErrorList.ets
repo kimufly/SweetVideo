@@ -35,7 +35,7 @@ export struct PrivacySpaceErrorList {
 
   async delItem(date: string) {
     this.errorListDataSource.deleteData(this.videoList.findIndex(i => i === date))
-    await SelectFileUtil.deletePrivacyVideo(date, date, Preferences.getVideoMetaDataEncryption(PathUtils.appContext!))
+    await SelectFileUtil.deletePrivacyVideo(date, date)
   }
 
   @Builder

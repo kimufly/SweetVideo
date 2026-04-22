@@ -15,6 +15,18 @@ export struct PersonalizePage {
     NavDestination() {
       List() {
         ListItem() {
+          SettingsToggleItem({
+            symbol: $r('sys.symbol.folder'),
+            message: '文件夹导航',
+            enable: Setting.showToast,
+            onChange: (checked: boolean) => {
+              Setting.showToast = checked
+              Preferences.saveShowToast(PathUtils.appContext!, Setting.showToast)
+            }
+          })
+        }
+
+        ListItem() {
           SettingsCheckboxItem({
             symbol: $r('sys.symbol.sun'),
             message: '显示模式',

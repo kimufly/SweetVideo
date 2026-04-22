@@ -25,6 +25,7 @@ import { ThrottleUtil } from '../utils/DebounceUtil'
 import { Setting } from '../utils/ObservedUtil'
 import { PathUtils } from '../utils/PathUtils'
 import PermissionUtil from '../utils/PermissionUtil'
+import FileFolderUtil from '../utils/FileFolderUtil'
 import PrivacySpaceUtil from '../utils/PrivacySpaceUtil'
 import RecentPlayUtil from '../utils/RecentPlayUtil'
 import SelectFileUtil from '../utils/SelectFileUtil'
@@ -416,7 +417,7 @@ export class AVPlayerController implements PlayerControllerInterface {
 
     // 更新播放列表数据，确保使用最新的数据
     if (!PrivacySpaceUtil.getPrivacyMode()) {
-      const folders = Preferences.getFileFolder(PathUtils.appContext!)
+      const folders = await FileFolderUtil.getAllFolderAsync(PathUtils.appContext!)
       const currentFolder = folders.find(f =>
       f.video_list.some(v => v.date === item.date)
       )

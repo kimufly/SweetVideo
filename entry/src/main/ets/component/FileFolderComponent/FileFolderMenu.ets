@@ -42,19 +42,19 @@ export struct FileFolderMenu {
               //批量移动
               let folders: FileFolder[] = []
               if (DataSyncUtil.delMultipleList.length > 0) {
-                folders = FileFolderUtil.transferVideosToFileFolder(PathUtils.appContext!, DataSyncUtil.delMultipleList,
+                folders = await FileFolderUtil.transferVideosToFileFolder(PathUtils.appContext!, DataSyncUtil.delMultipleList,
                   this.videoListController.folder.date, item.date)
               } else { //非批量操作
-                folders = FileFolderUtil.transferVideosToFileFolder(PathUtils.appContext!, [this.video_item!],
+                folders = await FileFolderUtil.transferVideosToFileFolder(PathUtils.appContext!, [this.video_item!],
                   this.videoListController.folder.date, item.date)
               }
               this.fileFolderSource.updateData(folders)
-              this.videoListController.videoDataSource.updateData(FolderOperator.getFolderByName(this.videoListController.folder.name)
-                .video_list)
+              const currentFolder = folders.find(f => f.name === this.videoListController.folder.name)
+              this.videoListController.videoDataSource.updateData(currentFolder?.video_list ?? [])
               this.videoListController.updateData(this.videoListController.videoDataSource,
                 this.videoListController.folder)
 
-              VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
+              await VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
               this.videoListController.closeMultipleChoose()
             })
         }

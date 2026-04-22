@@ -153,6 +153,15 @@ export class ConcurrencyManagerUtil {
     }
     return ConcurrencyManagerUtil.locks.get(key)!
   }
+
+  // 标准化URI（去掉查询参数等差异）
+  static normalizeUri(uri: string): string {
+    const queryIndex = uri.indexOf('?')
+    if (queryIndex > 0) {
+      return uri.substring(0, queryIndex)
+    }
+    return uri
+  }
 }
 
 // 实现一个串行的异步队列

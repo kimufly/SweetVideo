@@ -7,7 +7,7 @@ import { DeleteType } from '../common/enum/DeleteType'
 import { MpvAudioTrack, MpvSubtitleTrack } from '../controller/MpvController/MpvTypes'
 import { salmonLogger, SalmonLogLine } from 'salmonlogger'
 import Preferences from '../database/Preferences'
-import { FolderOperator, VideoMetaDataOperator } from '../database/VideoMetaData'
+import { VideoMetaDataOperator } from '../database/VideoMetaData'
 import { PathUtils } from './PathUtils'
 import RecentPlayUtil from './RecentPlayUtil'
 import SelectFileUtil from './SelectFileUtil'
@@ -116,8 +116,7 @@ export class SweetLogDataSource extends BaseDataSource<SalmonLogLine> {
 @ObservedV2
 export class VideoDataSource extends BaseDataSource<VideoMetadata> {
   public refreshData(folder: FileFolder) {
-    const videoMetaData: VideoMetadata[] = FolderOperator.getFolderByName(folder.name).video_list
-    this.updateData(videoMetaData)
+    this.updateData(folder.video_list)
   }
 
   public async deleteUnExistFile(item: VideoMetadata | undefined, videoListController: VideoListController,
@@ -163,7 +162,7 @@ export class VideoDataSource extends BaseDataSource<VideoMetadata> {
 
 @ObservedV2
 export class FileFolderDataSource extends BaseDataSource<FileFolder> {
-  getFileFolder(fileFolderName: string): FileFolder {
-    return Preferences.getFileFolder(PathUtils.appContext!).find(item => item.name === fileFolderName)!
+  getFileFolder(fileFolderName: string): FileFolder | undefined {
+    return this.data.find(item => item.name === fileFolderName)
   }
 }

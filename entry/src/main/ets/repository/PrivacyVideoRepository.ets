@@ -62,6 +62,14 @@ export class PrivacyVideoRepository {
     return results.length > 0
   }
 
+  // ✅ 添加：按 date 查询
+  async findByDate(date: string): Promise<PrivacyVideoEntity | undefined> {
+    const results = await this.query()
+      .where({ date: date })
+      .find()
+    return results.length > 0 ? results[0] : undefined
+  }
+
   migrate(): void {
     this.orm.migrate(PrivacyVideoEntity)
   }

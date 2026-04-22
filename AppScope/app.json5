@@ -1,6 +1,6 @@
 {
   "app": {
-    "bundleName": "com.example.sweetvideo",
+    "bundleName": "cn.kimufly.sweetvideo",
     "vendor": "example",
     "versionCode": 1000043,
     "versionName": "1.2.4",

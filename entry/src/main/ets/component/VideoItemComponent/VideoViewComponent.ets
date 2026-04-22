@@ -12,11 +12,11 @@ import SelectFileUtil from '../../utils/SelectFileUtil'
 import ToolsUtil from '../../utils/ToolsUtil'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 import DataSyncUtil from '../../utils/DataSyncUtil'
-import { FileFolderDataSource } from '../../utils/DataUtil'
+import { FileFolderDataSource, VideoDataSource } from '../../utils/DataUtil'
 import { FileFolderMenu } from '../FileFolderComponent/FileFolderMenu'
 import { MaskComponent } from '../SideBarComponent/MaskComponent'
 import { SearchComponent } from './SearchComponent'
-import { FolderOperator } from '../../database/VideoMetaData'
+import { VideoMetaDataOperator } from '../../database/VideoMetaData'
 import VideoUtils from '../../utils/VideoUtil'
 import FileFolderUtil from '../../utils/FileFolderUtil'
 import NavigationAddress from '../../common/NavigationCommon'
@@ -161,15 +161,12 @@ export struct VideoView {
               // 使用防抖，避免快速输入时频繁过滤
               DebounceUtil.debounce('search', () => {
                 if (this._searchValue === '') {
-                  const videoMetaDataList: VideoMetadata[] =
-                    FolderOperator.getFolderByName(this.videoListController.folder.name).video_list
-                  this.videoListController.videoDataSource.updateData(videoMetaDataList)
+                  this.videoListController.videoDataSource.updateData(this.videoListController.folder.video_list)
                   this.videoListController.updateData(this.videoListController.videoDataSource,
                     this.videoListController.folder)
                 } else {
                   const videoMetaDataList: VideoMetadata[] =
-                    SelectFileUtil.getItemFromSearch(FolderOperator.getFolderByName(this.videoListController.folder.name)
-                      .video_list, this._searchValue)
+                    SelectFileUtil.getItemFromSearch(this.videoListController.folder.video_list, this._searchValue)
                   this.videoListController.videoDataSource.updateData(videoMetaDataList)
                   this.videoListController.updateData(this.videoListController.videoDataSource,
                     this.videoListController.folder)
@@ -367,6 +364,7 @@ export struct VideoView {
 
   /**
    * 通过索引切换文件夹
+   * 同步切换 + 缓存优先 + 延迟加载，避免手势滑动被阻塞
    */
   private switchToFolderByIndex(index: number): void {
     // 边界检查
@@ -384,32 +382,60 @@ export struct VideoView {
     if (this.videoListController?.folder?.date === folder.date) {
       return
     }
-    // 保留搜索状态，在新文件夹中应用搜索过滤
-    this.file_folder_list = Preferences.getFileFolder(PathUtils.appContext!)
-    this.fileFolderSource.updateData(this.file_folder_list)
-    const currentFolder = this.fileFolderSource.getFileFolder(folder.name)
-    if (currentFolder) {
-      // 如果有搜索值，在新文件夹中过滤视频
-      let filteredVideos = currentFolder.video_list
+
+    // 优先检查缓存
+    const cached = this.videoListController.getCachedFolder(folder.date)
+    if (cached && cached.video_list.length > 0) {
+      let filteredVideos = cached.video_list
       if (this._searchValue.length > 0) {
-        filteredVideos = SelectFileUtil.getItemFromSearch(currentFolder.video_list, this._searchValue)
+        filteredVideos = SelectFileUtil.getItemFromSearch(cached.video_list, this._searchValue)
       }
-      animateToImmediately({
-        duration: 200,
-        curve: Curve.EaseInOut
-      }, () => {
-        this.videoListController.videoDataSource.updateData(filteredVideos)
-        this.videoListController.updateData(
-          this.videoListController.videoDataSource,
-          currentFolder
-        )
-      })
+      this.videoListController.updateData(new VideoDataSource(filteredVideos), cached)
+      this.scrollToCurrentFolder(index)
+      this.sideBarController.close(true)
+      this.onScrollToFolderDateChange(folder.date)
+      return
     }
-    // 滚动面包屑使当前文件夹可见
+
+    // 缓存未命中：保持当前列表，延迟加载避免阻塞切换动画
+    this.videoListController.startFolderSwitch({ name: folder.name, date: folder.date, video_list: [] })
+
     this.scrollToCurrentFolder(index)
     this.sideBarController.close(true)
-    // 同步 scrollToFolderDate，触发 onFolderChanged 确保状态一致
     this.onScrollToFolderDateChange(folder.date)
+
+    setTimeout(() => {
+      this.loadFolderVideosAsync(folder)
+    }, 0)
+  }
+
+  private async loadFolderVideosAsync(folder: FileFolder): Promise<void> {
+    let videos: VideoMetadata[] = []
+    if (folder.name) {
+      try {
+        videos = await FileFolderUtil.loadFolderVideosAsync(PathUtils.appContext!, folder.name)
+      } catch (e) {
+        salmonLogger.addLog(TAG, `[VideoView] Failed to load videos for ${folder.name}: ${e}`, true)
+      }
+    }
+
+    // 竞态保护：加载完成时若用户已切换到其他文件夹，则不更新数据
+    if (this.videoListController.folder?.date !== folder.date) {
+      salmonLogger.addLog(TAG, `[VideoView] Folder changed during load, skip updating ${folder.name}`)
+      return
+    }
+
+    let filteredVideos = videos
+    if (this._searchValue.length > 0) {
+      filteredVideos = SelectFileUtil.getItemFromSearch(videos, this._searchValue)
+    }
+
+    const folderWithVideos: FileFolder = { name: folder.name, date: folder.date, video_list: videos }
+    this.videoListController.videoDataSource.updateData(filteredVideos)
+    this.videoListController.updateData(
+      this.videoListController.videoDataSource,
+      folderWithVideos
+    )
   }
 
   /**
