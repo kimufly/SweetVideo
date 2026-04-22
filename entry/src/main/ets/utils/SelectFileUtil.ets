@@ -119,7 +119,7 @@ export default class SelectFileUtil {
     let sourceFile: fs.File | null = null
     let targetFile: fs.File | null = null
     try {
-      sourceFile = fs.openSync(uri)
+      sourceFile = fs.openSync(uri, fs.OpenMode.READ_ONLY)
       const saverOption = new picker.DocumentSaveOptions()
       saverOption.newFileNames = SelectFileUtil.copyFileReName(title, format)
       const documentSaveResult = await new Promise<string[]>((resolve, reject) => {
@@ -568,7 +568,7 @@ export default class SelectFileUtil {
       await SelectFileUtil.selectFromFileManager(uri)
     }
     try {
-      await fs.open(String(uri))
+      await fs.open(String(uri), fs.OpenMode.READ_ONLY)
       return true
     } catch (e) {
       if (showToast) {

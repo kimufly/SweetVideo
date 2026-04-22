@@ -35,7 +35,7 @@ export class VideoListController {
   listScroller: ListScroller = new ListScroller()
   @Trace videoMetaDataList: VideoMetadata[]
   @Trace multipleChooseState: Visibility = Visibility.None
-  @Trace listLine: number = 1
+  @Trace listLine: number = 2
   videoDataSource: VideoDataSource
   // 文件夹切换加载状态
   @Trace isFolderLoading: boolean = false
@@ -149,9 +149,18 @@ export class VideoListController {
   }
 
   public refresh(width: number, listDisplayMode: ListDisplayMode) {
+    // 宽度无效时不重新计算，避免负值导致列数被覆盖为 1
+    if (width <= 0) {
+      return
+    }
     // TODO 这里的处理太粗暴了，应该定义每个元素的MaxWidth 来计算格子，或者根据尺寸做响应式布局
     const base = Math.floor(width / 500)
-    this.listLine = listDisplayMode === ListDisplayMode.LIST_DISPLAY ? base + 1 : base + 2
+    let calculated = listDisplayMode === ListDisplayMode.LIST_DISPLAY ? base + 1 : base + 2
+    // 竖屏或窄屏时，若宽度 >= 360 且计算结果小于 2，则至少显示 2 列
+    if (width >= 360 && calculated < 2) {
+      calculated = 2
+    }
+    this.listLine = calculated
     // 增加判断，旋转时保持滚动位置不变
     if (this.listScroller.currentOffset()?.yOffset == -90) {
       this.listScroller.scrollEdge(Edge.Top)
@@ -335,6 +344,10 @@ export struct VideoList {
       .onAppear(() => {
         this.videoListController.listScroller.scrollEdge(Edge.Top)
       })
+      .onAreaChange((_oldValue: Area, newValue: Area) => {
+        const width = Number(newValue.width)
+        this.videoListController.refresh(width, Setting.listDisplayMode)
+      })
     } else {
       WaterFlow({
         scroller: this.videoListController.listScroller,
@@ -418,6 +431,10 @@ export struct VideoList {
       })
       .onAppear(() => {
         this.videoListController.listScroller.scrollEdge(Edge.Top)
+      })
+      .onAreaChange((_oldValue: Area, newValue: Area) => {
+        const width = Number(newValue.width)
+        this.videoListController.refresh(width, Setting.listDisplayMode)
       })
     }
   }

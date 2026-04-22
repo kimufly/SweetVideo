@@ -466,7 +466,7 @@ struct Index {
             videoListController: this.videoListController,
             scrollToFolderDate: this.scrollToFolderDate,
             onScrollToFolderDateChange: (v: string) => { this.scrollToFolderDate = v }
-          }).scale({
+          }).height('100%').scale({
             x: this.sideBarController.isShow === true ? 0.95 : 1,
             y: this.sideBarController.isShow ? 0.95 : 1
           }).animation({ duration: 300, curve: Curve.Ease })
@@ -569,8 +569,10 @@ struct Index {
       if (isVisible) {
         // 增加判断，旋转时保持滚动位置不变
         if (this.videoListController.folder?.video_list) {
-          const actualContentWidth = this.screen_width - DataSyncUtil.minContentWidth
-          this.videoListController.refresh(actualContentWidth, Setting.listDisplayMode)
+          if (this.screen_width > 0) {
+            const actualContentWidth = this.screen_width - DataSyncUtil.minContentWidth
+            this.videoListController.refresh(actualContentWidth, Setting.listDisplayMode)
+          }
           const targetFolder = this.videoListController.folder ?? this.file_folder_list[0]
           const updatedFolders = await VideoUtils.refresh(this.videoListController, this.fileFolderSource, targetFolder)
           // 更新文件夹列表状态，确保面包屑等UI正确刷新

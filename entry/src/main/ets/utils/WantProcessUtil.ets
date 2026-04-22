@@ -80,7 +80,7 @@ export default class WantProcess {
       let file: fs.File | undefined
       try {
         avMetadataExtractor = await media.createAVMetadataExtractor()
-        file = fs.openSync(WantProcess.receiveWantUri)
+        file = fs.openSync(WantProcess.receiveWantUri, fs.OpenMode.READ_ONLY)
         avMetadataExtractor.fdSrc = file
         const metadata = await new Promise<media.AVMetadata>((resolve, reject) => {
           avMetadataExtractor!.fetchMetadata((error: BusinessError, metadata: media.AVMetadata) => {

@@ -439,7 +439,7 @@ export class AVPlayerController implements PlayerControllerInterface {
       if (this.avPlayer) {
         try {
           await PermissionUtil.activatePermission(this.nowPlaying?.uri)
-          this.avPlayer.fdSrc = fileIo.openSync(this.nowPlaying?.uri)
+          this.avPlayer.fdSrc = fileIo.openSync(this.nowPlaying?.uri, fileIo.OpenMode.READ_ONLY)
         } catch (error) {
           ToolsUtil.addLogger("打开视频文件失败：" + error, true)
           ToolsUtil.showToast('视频打开失败，可能已失效：' + error)

@@ -68,6 +68,7 @@ export function VideoInfoBuilder(params: VideoInfoBuilderParams) {
       .fontColor(params.nowPlaying && params.nowPlaying?.date === params.item?.date ?
         $r('sys.color.white') : $r('app.color.text_color'))
 
+    Blank()
     if (params.showProgress) {
       Progress({ value: params.item?.last_play, total: params.item?.time, type: ProgressType.Ring })
         .width(30)

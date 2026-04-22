@@ -62,7 +62,7 @@ export struct PrivacySpace { // 隐私空间页
   })
   @Local video_meta_data_encryption: VideoMetadata[] = []
   @Local allVideos: VideoMetadata[] = [] // 保存完整数据用于搜索
-  @Local list_line: number = 1
+  @Local list_line: number = 2
   @Consumer('pathStack') pathStack: NavPathStack = new NavPathStack()
   @Local totalItems: number = 0
   @Local processedItems: number = 0

@@ -76,7 +76,7 @@ async function extractVideoMetadataTask(uri: string): Promise<MetadataExtraction
     avMetadataExtractor = await media.createAVMetadataExtractor()
 
     // 打开文件
-    file = fs.openSync(uri)
+    file = fs.openSync(uri, fs.OpenMode.READ_ONLY)
     const fileName = file.name
 
     // 获取文件大小

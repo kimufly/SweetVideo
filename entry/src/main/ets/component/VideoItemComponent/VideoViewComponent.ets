@@ -105,7 +105,7 @@ export struct VideoView {
       })
 
       if (!this.loading && this.videoListController.openSideBarTip(this._searchValue)) {
-        Row() { //顶栏
+        Row() {
           Column() {
             Text($r('app.string.nothing')).fontSize(25).fontWeight(FontWeight.Bold)
             Text($r('app.string.open_side_bar_tip'))
@@ -115,7 +115,10 @@ export struct VideoView {
               .margin({ top: 20 })
           }
         }
+        .width('100%')
         .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
         .animation({ duration: 150, curve: Curve.Ease })
       }
 
@@ -131,7 +134,10 @@ export struct VideoView {
               .margin({ top: 20 })
           }
         }
+        .width('100%')
         .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
         .animation({ duration: 150, curve: Curve.Ease })
       }
       Column() {
@@ -239,7 +245,9 @@ export struct VideoView {
           this.FolderTabsBuilder()
         }
       }.width('100%').padding({ top: SafeHeight.topSafeHeight, left: 10, right: 10 })
-    }.width('100%')
+    }
+	.width('100%')
+	.height('100%')
   }
 
   @Builder

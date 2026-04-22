@@ -23,7 +23,7 @@ export default class PermissionUtil {
     }
     try {
       // 首先尝试直接访问
-      let fd = fs.openSync(uri)
+      let fd = fs.openSync(uri, fs.OpenMode.READ_WRITE)
       fs.closeSync(fd)
       return true
     } catch (error) {
@@ -43,7 +43,7 @@ export default class PermissionUtil {
             await fileShare.activatePermission(permissionsToActivate)
           }
           // 验证权限是否真正生效
-          let fd = fs.openSync(uri)
+          let fd = fs.openSync(uri, fs.OpenMode.READ_WRITE)
           fs.closeSync(fd)
           return true
         } catch (error) {
@@ -116,11 +116,29 @@ export default class PermissionUtil {
           operationMode: fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE,
         }
         let policies: Array<fileShare.PolicyInfo> = [policyInfo]
-        fileShare.persistPermission(policies)?.catch(() => {
-          salmonLogger.addLog(TAG, 'persistPermission error', true)
-        })
-        let fd = await fs.open(uri)
-        await fs.close(fd)
+        // HarmonyOS Next 中 persistPermission API 可能不可用或已废弃，
+        // 文件选择器返回的 URI 权限已自动持久化，增加存在性检查避免运行时错误
+        if (typeof fileShare.persistPermission === 'function') {
+          try {
+            await fileShare.persistPermission(policies)
+          } catch (persistError) {
+            const err = persistError as BusinessError
+            const errCode = err?.code
+            // 13900001: Operation not permitted, 13900011: 权限已存在等预期错误
+            if (errCode === 13900001 || errCode === 13900011) {
+              salmonLogger.addLog(TAG, `persistPermission already exists for uri: ${uri}, code: ${errCode}`, false)
+            } else {
+              salmonLogger.addLog(TAG, `persistPermission failed for uri: ${uri}, code: ${errCode}, message: ${err?.message}`, true)
+            }
+          }
+        }
+        try {
+          let fd = await fs.open(uri, fs.OpenMode.READ_WRITE)
+          await fs.close(fd)
+        } catch (fileError) {
+          salmonLogger.addLog(TAG, `File access check failed for uri: ${uri}, error: ${fileError}`, true)
+          return true
+        }
         // 持久化成功，添加到缓存
         PermissionUtil.permissionCache.add(uri)
       }

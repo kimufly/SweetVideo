@@ -184,7 +184,7 @@ export default class AVSessionUtil {
   static async playItem(now_playing: VideoMetadata) {
     await PermissionUtil.activatePermission(now_playing?.uri)
     try {
-      const file = fileIo.openSync(now_playing?.uri)
+      const file = fileIo.openSync(now_playing?.uri, fileIo.OpenMode.READ_ONLY)
       let avFileDescriptor: media.AVFileDescriptor = { fd: file.fd }
       // 设置播放参数，开始播放
       let playItem: avSession.AVQueueItem = {
