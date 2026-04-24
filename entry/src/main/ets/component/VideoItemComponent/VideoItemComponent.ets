@@ -145,7 +145,7 @@ export class VideoListController {
     XAnimation.runWithAnimation(() => {
       this.multipleChooseState = Visibility.None
     })
-    DataSyncUtil.delMultipleList.length = 0
+    DataSyncUtil.delMultipleList = []
   }
 
   public refresh(width: number, listDisplayMode: ListDisplayMode) {
@@ -189,11 +189,6 @@ export struct VideoList {
         try {
           await VideoMetaDataOperator.deleteItem(this.videoListController, this.fileFolderSource, deleteType,
             DataSyncUtil.editingVideo!)
-          if (DataSyncUtil.delMultipleList.length > 0) {
-            await FileFolderUtil.delVideosFileFolder(PathUtils.appContext!, this.videoListController,
-              this.fileFolderSource)
-          }
-          this.videoListController.closeMultipleChoose()
         } catch (e) {
           ToolsUtil.showToast(`删除失败:${e}`)
         } finally {
@@ -493,18 +488,17 @@ export struct VideoList {
         })
       MenuItem({
         symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.checkmark_square_on_square')),
-        content: $r('app.string.multiple_choice')
+        content: this.videoListController.multipleChooseState === Visibility.Visible ? '取消多选' :
+          $r('app.string.multiple_choice')
       })
         .onClick(() => {
           XAnimation.runWithAnimation(() => {
             this.videoListController.multipleChooseState =
               this.videoListController.multipleChooseState == Visibility.None ? Visibility.Visible : Visibility.None
           })
-          DataSyncUtil.delMultipleList.length = 0
-          // 选择当前项
-          if (item) {
-            this.delMultipleList.push(item)
-          }
+          // 初始化多选列表并通过回调同步到父组件
+          this._delMultipleList = item ? [item] : []
+          this.onDelMultipleListChange([...this._delMultipleList])
         })
       MenuItem({
         symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.play_round_triangle')),

@@ -13,6 +13,9 @@ import RecentPlayUtil from './RecentPlayUtil'
 import { PathUtils } from './PathUtils'
 import SubtitleUtil from './SubtitleUtil'
 import fileIo from '@ohos.file.fs'
+import { fileUri } from '@kit.CoreFileKit'
+import { fileManagerService } from '@kit.FileManagerServiceKit'
+import { DeleteType } from '../common/enum/DeleteType'
 import { FolderRepository } from '../repository/FolderRepository'
 import { VideoRepository } from '../repository/VideoRepository'
 import { PrivacyVideoRepository } from '../repository/PrivacyVideoRepository'
@@ -307,7 +310,7 @@ export default class FileFolderUtil {
   // 批量删除文件夹中的视频（多选删除场景）
   // ORM 改造：通过 surviveVideo Map 计算需要保留的视频，对其余视频调用 videoRepo.delete 删除
   static async delVideosFileFolder(context: Context, videoListController: VideoListController,
-    folderDataSource: FileFolderDataSource): Promise<FileFolder | undefined> {
+    folderDataSource: FileFolderDataSource, deleteType: DeleteType = DeleteType.SOFT): Promise<FileFolder | undefined> {
     const folderRepo = FolderRepository.getInstance()
     const videoRepo = VideoRepository.getInstance()
 
@@ -328,6 +331,26 @@ export default class FileFolderUtil {
       RecentPlayUtil.delData(PathUtils.appContext!, item.uri)
       await SubtitleUtil.deleteSubtitle(PathUtils.subtitlePath, item.date)
       await SelectFileUtil.deleteCover(item.date)
+
+      if (deleteType == DeleteType.HARD) {
+        try {
+          await fileIo.unlink(item.uri)
+          salmonLogger.addLog('BatchDelete', 'remove file succeed: ' + item.uri)
+        } catch (err) {
+          salmonLogger.addLog('BatchDelete',
+            'remove file failed: ' + (err as Error).message, true)
+        }
+      } else if (deleteType == DeleteType.RECENT) {
+        try {
+          if (canIUse('SystemCapability.FileManagement.FileManagerService.Core')) {
+            await fileManagerService.deleteToTrash(fileUri.getUriFromPath(item.uri))
+          }
+        } catch (error) {
+          salmonLogger.addLog('BatchDelete',
+            'move to trash failed: ' + error.message + ', code: ' + error.code, true)
+        }
+      }
+
       surviveVideo.delete(item.uri)
     }
 

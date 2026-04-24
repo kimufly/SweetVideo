@@ -3,6 +3,7 @@ import { VideoMetadata } from '../../interfaces/VideoMetadataInterface'
 import { SideBarController } from '../SideBarComponent/SideBar'
 import {
   ButtonFancyModifier,
+  DefaultDialogShadow,
   MenuFancyModifier,
   SearchShadowModifier,
   SymbolGlyphFancyModifier
@@ -16,6 +17,8 @@ import { FileFolderDataSource, VideoDataSource } from '../../utils/DataUtil'
 import { FileFolderMenu } from '../FileFolderComponent/FileFolderMenu'
 import { MaskComponent } from '../SideBarComponent/MaskComponent'
 import { SearchComponent } from './SearchComponent'
+import { BatchVideoDeleteDialog } from '../Dialog/BatchVideoDeleteDialog'
+import { DeleteType } from '../../common/enum/DeleteType'
 import { VideoMetaDataOperator } from '../../database/VideoMetaData'
 import VideoUtils from '../../utils/VideoUtil'
 import FileFolderUtil from '../../utils/FileFolderUtil'
@@ -55,6 +58,22 @@ export struct VideoView {
   private readonly FOLDER_TAB_HEIGHT: number = 28
   @Event onSearchValueChange: (v: string) => void = () => {
   }
+  batchDelConfirmDialog: CustomDialogController = new CustomDialogController({
+    builder: BatchVideoDeleteDialog({
+      videoList: this.delMultipleList,
+      confirm: async (deleteType: DeleteType) => {
+        try {
+          if (this.delMultipleList.length > 0) {
+            await FileFolderUtil.delVideosFileFolder(PathUtils.appContext!, this.videoListController,
+              this.fileFolderSource, deleteType)
+          }
+        } finally {
+          VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
+          this.videoListController.closeMultipleChoose()
+        }
+      }
+    }), cornerRadius: 20, shadow: DefaultDialogShadow
+  })
 
   @Monitor('file_folder_list')
   onFolderListChanged() {
@@ -291,25 +310,23 @@ export struct VideoView {
         })
       MenuItem({
         symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.checkmark_square_on_square')),
-        content: $r('app.string.select_all')
+        content: this.delMultipleList.length === this.videoListController.videoMetaDataList.length &&
+          this.videoListController.videoMetaDataList.length > 0 ? '取消全选' : $r('app.string.select_all')
       })
         .onClick(() => {
-          this.delMultipleList = [...this.videoListController.videoMetaDataList]
+          if (this.delMultipleList.length === this.videoListController.videoMetaDataList.length &&
+            this.videoListController.videoMetaDataList.length > 0) {
+            this.delMultipleList = []
+          } else {
+            this.delMultipleList = [...this.videoListController.videoMetaDataList]
+          }
         })
       MenuItem({
         symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.trash_fill')),
         content: $r('app.string.delete_selected')
       })
-        .onClick(async () => {
-          try {
-            if (this.delMultipleList.length > 0) {
-              await FileFolderUtil.delVideosFileFolder(PathUtils.appContext!, this.videoListController,
-                this.fileFolderSource)
-            }
-          } finally {
-            VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
-            this.videoListController.closeMultipleChoose()
-          }
+        .onClick(() => {
+          this.batchDelConfirmDialog.open()
         })
       MenuItem({
         symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.arrow_right_folder_circle')),
@@ -359,6 +376,10 @@ export struct VideoView {
     .justifyContent(FlexAlign.Center)
     .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
     .onClick(() => {
+      // 多选模式下禁止切换文件夹
+      if (this.videoListController.multipleChooseState === Visibility.Visible) {
+        return
+      }
       if (this.currentFolderIndex !== index) {
         this.currentFolderIndex = index
         this.switchToFolderByIndex(index)

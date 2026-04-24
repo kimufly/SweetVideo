@@ -44,6 +44,7 @@ export default struct VideoCardItem {
     this.coverUri = fileUri.getUriFromPath(PathUtils.coverPath + this.item.date)
   }
 
+  @Monitor('delMultipleList')
   checkChoose() {
     this.choose = this.delMultipleList.some(item => item.date === this.item.date)
   }
