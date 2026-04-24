@@ -30,6 +30,8 @@ import { SafeHeight, Setting } from '../../utils/ObservedUtil'
 import { SortComponent } from './SortComponent'
 import { DebounceUtil } from '../../utils/DebounceUtil'
 import { salmonLogger } from 'salmonlogger'
+import { BatchVideoDeleteDialog } from '../Dialog/BatchVideoDeleteDialog'
+import { DeleteType } from '../../common/enum/DeleteType'
 
 const TAG = 'VideoViewComponent'
 
@@ -88,6 +90,22 @@ export struct VideoView {
   SyncDelMultipleList() {
     DataSyncUtil.delMultipleList = this.delMultipleList
   }
+  batchDelConfirmDialog: CustomDialogController = new CustomDialogController({
+    builder: BatchVideoDeleteDialog({
+      videoList: this.delMultipleList,
+      confirm: async (deleteType: DeleteType) => {
+        try {
+          if (this.delMultipleList.length > 0) {
+            await FileFolderUtil.delVideosFileFolder(PathUtils.appContext!, this.videoListController,
+              this.fileFolderSource, deleteType)
+          }
+        } finally {
+          VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
+          this.videoListController.closeMultipleChoose()
+        }
+      }
+    }), cornerRadius: 20, shadow: DefaultDialogShadow
+  })
 
   @Event onScrollToFolderDateChange: (v: string) => void = () => {
   }
