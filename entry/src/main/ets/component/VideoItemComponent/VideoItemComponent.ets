@@ -154,10 +154,10 @@ export class VideoListController {
       return
     }
     // TODO 这里的处理太粗暴了，应该定义每个元素的MaxWidth 来计算格子，或者根据尺寸做响应式布局
-    const base = Math.floor(width / 500)
+    const base = Math.floor(Math.abs(width) / 500)
     let calculated = listDisplayMode === ListDisplayMode.LIST_DISPLAY ? base + 1 : base + 2
     // 竖屏或窄屏时，若宽度 >= 360 且计算结果小于 2，则至少显示 2 列
-    if (width >= 360 && calculated < 2) {
+    if (Math.abs(width) >= 360 && calculated < 2) {
       calculated = 2
     }
     this.listLine = calculated
@@ -180,7 +180,6 @@ export class VideoListController {
 @ComponentV2
 export struct VideoList {
   @Param searchValue: string = ''
-  @Event onSearchValueChange: (v: string) => void = () => {}
   @Local _searchValue: string = ''
   @Param videoListController: VideoListController = new VideoListController()
   @Consumer() fileFolderSource: FileFolderDataSource = new FileFolderDataSource([])
@@ -231,16 +230,18 @@ export struct VideoList {
   searchController: SearchController = new SearchController()
   @Consumer('pathStack') pathStack: NavPathStack = new NavPathStack()
   @Param delMultipleList: VideoMetadata[] = []
-  @Event onDelMultipleListChange: (v: VideoMetadata[]) => void = () => {}
   @Local _delMultipleList: VideoMetadata[] = []
   VideoDetailDialog: CustomDialogController = new CustomDialogController({
     builder: VideoDetailDialog(), cornerRadius: 20,
     shadow: DefaultDialogShadow
   })
+  @Event onSearchValueChange: (v: string) => void = () => {
+  }
+  @Event onDelMultipleListChange: (v: VideoMetadata[]) => void = () => {
+  }
 
   aboutToAppear(): void {
     this._searchValue = this.searchValue
-    this._delMultipleList = [...this.delMultipleList]
   }
 
   @Monitor('searchValue')
@@ -502,8 +503,7 @@ export struct VideoList {
           DataSyncUtil.delMultipleList.length = 0
           // 选择当前项
           if (item) {
-            this._delMultipleList.push(item)
-            this.onDelMultipleListChange([...this._delMultipleList])
+            this.delMultipleList.push(item)
           }
         })
       MenuItem({
