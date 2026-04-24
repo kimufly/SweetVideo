@@ -19,6 +19,7 @@ import {
   seek as mpvSeek,
   selectAudio as mpvSelectAudio,
   selectSubtitle as mpvSelectSubtitle,
+  setBlurayDevice as mpvSetBlurayDevice,
   setDecodeType as mpvSetDecodeType,
   setHwdecMode as mpvSetHwdecMode,
   setKeepAspect as mpvSetKeepAspect,
@@ -58,6 +59,7 @@ import PrivacySpaceUtil from '../../utils/PrivacySpaceUtil';
 import RecentPlayUtil from '../../utils/RecentPlayUtil';
 import SelectFileUtil from '../../utils/SelectFileUtil';
 import SubtitleUtil from '../../utils/SubtitleUtil';
+import IsoFileUtil from '../../utils/IsoFileUtil';
 import { BaseListener } from '../../utils/BaseEventUtil';
 import PermissionUtil from '../../utils/PermissionUtil';
 import Preferences from '../../database/Preferences';
@@ -232,8 +234,27 @@ export class MpvController implements PlayerControllerInterface {
   }
 
   init(url?: string, pathStack?: NavPathStack): void {
+    // 处理ISO文件
+    let playUrl = url!;
+    if (IsoFileUtil.isIsoFile(url!)) {
+      salmonLogger.addLog(TAG, '检测到ISO文件，使用bd://协议播放', false);
+
+      // ISO文件：保留完整的file:// URI格式
+      // bluray-device 需要完整的URI，而不是纯路径
+      const isoPath = url!; // 保留原始URI，包含file://前缀
+
+      // 设置bluray-device选项
+      mpvSetBlurayDevice(this.mpvHandle, isoPath);
+
+      // 使用bd://longest协议播放最长的标题
+      playUrl = 'bd://longest';
+    } else {
+      // 非ISO文件，需要转换file:// URI为本地路径
+      playUrl = new fileUri.FileUri(url!).path;
+    }
+
     // 传递起始位置给 native（参考 mpv-android）
-    mpvLoadVideo(this.mpvHandle, new fileUri.FileUri(url!).path)
+    mpvLoadVideo(this.mpvHandle, playUrl)
 
     // 注册播放完成回调（只注册一次）
     this.registerPlaybackCompleteListener(pathStack!)
@@ -772,7 +793,17 @@ export class MpvController implements PlayerControllerInterface {
 
     // 重新加载视频
     if (savedVideo) {
-      mpvLoadVideo(this.mpvHandle, new fileUri.FileUri(savedVideo.uri).path)
+      // 处理ISO文件
+      let reloadUrl = savedVideo.uri;
+      if (IsoFileUtil.isIsoFile(savedVideo.uri)) {
+        // ISO文件：保留完整的file:// URI格式
+        const isoPath = savedVideo.uri; // 保留原始URI，包含file://前缀
+        mpvSetBlurayDevice(this.mpvHandle, isoPath);
+        reloadUrl = 'bd://longest';
+      } else {
+        reloadUrl = new fileUri.FileUri(savedVideo.uri).path;
+      }
+      mpvLoadVideo(this.mpvHandle, reloadUrl)
       this.getData()
 
       // 延迟检查播放状态并恢复

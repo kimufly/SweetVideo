@@ -16,9 +16,10 @@ import VideoInfoUtil from './VideoInfoUtil'
 import { WindowUtil } from './WindowUtil'
 import fileIo from '@ohos.file.fs'
 import { util } from '@kit.ArkTS'
-import { updateManager } from '@kit.StoreKit'
 import { window } from '@kit.ArkUI'
 import { vibrator } from '@kit.SensorServiceKit'
+import { pinyin4js } from '@ohos/pinyin4js'
+import { updateManager } from '@kit.AppGalleryKit'
 
 const TAG = 'ToolsUtil'
 
