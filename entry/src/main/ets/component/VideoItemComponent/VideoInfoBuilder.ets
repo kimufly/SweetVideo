@@ -82,7 +82,7 @@ export function VideoInfoBuilder(params: VideoInfoBuilderParams) {
   .width('100%')
   .height('auto')
   .padding({
-    right: 10,
+    right: 0,
     left: 5,
     top: 4,
     bottom: 4

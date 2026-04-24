@@ -4,6 +4,7 @@ import FileFolderUtil from './FileFolderUtil'
 import SelectFileUtil from './SelectFileUtil'
 import ToolsUtil from './ToolsUtil'
 import { salmonLogger } from 'salmonlogger'
+import { extractVideoMetadataInTaskPool, MetadataExtractionResult } from './TaskpoolUtil'
 
 const TAG = 'FileProcessorUtil'
 
@@ -25,7 +26,7 @@ export class FileProcessorUtil {
   // 失败文件列表
   public static failedFiles: string[] = []
 
-  // 分块处理，将文件列表分成多个块，每个块内的文件串行处理，不同块之间并行执行，通过MAX_CONCURRENT控制最大并发数
+  // 批量导入优化：先并行提取所有元数据（TaskPool 最大化利用），再串行处理每个文件
   public static async processFilesConcurrently(
     fileList: string[],
     context: Context,
@@ -39,62 +40,73 @@ export class FileProcessorUtil {
       ToolsUtil.showToast('没有任何文件被导入哦~')
       return
     }
-    FileFolderUtil.duplicateVideo = 0 // 这里重置重复视频数
-    FileProcessorUtil.failedFiles = [] // 重置失败文件列表
+    FileFolderUtil.duplicateVideo = 0
+    FileProcessorUtil.failedFiles = []
 
     const startTime = Date.now()
     let processedCount = 0
     let failedCount = 0
 
-    const chunks = FileProcessorUtil.splitListIntoChunks(fileList)
-    const workers = chunks.map((chunk): Promise<void> => {
-      return (async () => {
-        for (const uri of chunk) {
-          const fileName = uri.split('/')[uri.split('/').length - 1]
-
-          // 更新进度：开始提取元数据
-          progressCallback({
-            current: processedCount + 1,
-            total: fileList.length,
-            fileName: fileName,
-            stage: 'extracting',
-            speed: processedCount / ((Date.now() - startTime) / 1000),
-            elapsedTime: Date.now() - startTime,
-            failedCount: failedCount
-          })
-
-          try {
-            await SelectFileUtil.processSingleFile(
-              uri,
-              context,
-              sandbox_video,
-              sandbox_path,
-              video_meta_data,
-              fileFolder
-            )
-          } catch (error) {
-            // 记录失败文件，继续处理其他文件
-            FileProcessorUtil.failedFiles.push(uri)
-            failedCount++
-            salmonLogger.addLog(TAG, `处理文件失败: ${fileName}, 错误: ${error}`, true)
-          }
-
-          processedCount++
-
-          // 更新进度：完成一个文件
-          progressCallback({
-            current: processedCount,
-            total: fileList.length,
-            fileName: fileName,
-            stage: 'saving',
-            speed: processedCount / ((Date.now() - startTime) / 1000),
-            elapsedTime: Date.now() - startTime,
-            failedCount: failedCount
-          })
-        }
-      })()
+    // 阶段1: 并行提取所有文件的元数据（TaskPool 最大化利用）
+    progressCallback({
+      current: 0,
+      total: fileList.length,
+      fileName: '提取元数据中...',
+      stage: 'extracting',
+      speed: 0,
+      elapsedTime: 0,
+      failedCount: 0
     })
-    await Promise.all(workers)
+
+    const extractionTasks: Promise<MetadataExtractionResult>[] = fileList.map(uri =>
+      extractVideoMetadataInTaskPool(uri)
+    )
+    const extractionResults: MetadataExtractionResult[] = await Promise.all(extractionTasks)
+
+    // 阶段2: 使用预提取的元数据串行处理每个文件（避免逐文件等待 TaskPool）
+    for (let i = 0; i < fileList.length; i++) {
+      const uri = fileList[i]
+      const result = extractionResults[i]
+      const fileName = result.fileName || uri.split('/')[uri.split('/').length - 1]
+
+      progressCallback({
+        current: i + 1,
+        total: fileList.length,
+        fileName: fileName,
+        stage: 'extracting',
+        speed: i / ((Date.now() - startTime) / 1000),
+        elapsedTime: Date.now() - startTime,
+        failedCount: failedCount
+      })
+
+      try {
+        await SelectFileUtil.processSingleFileWithMetadata(
+          uri,
+          context,
+          sandbox_video,
+          sandbox_path,
+          video_meta_data,
+          result,
+          fileFolder
+        )
+      } catch (error) {
+        FileProcessorUtil.failedFiles.push(uri)
+        failedCount++
+        salmonLogger.addLog(TAG, `处理文件失败: ${fileName}, 错误: ${error}`, true)
+      }
+
+      processedCount++
+
+      progressCallback({
+        current: processedCount,
+        total: fileList.length,
+        fileName: fileName,
+        stage: 'saving',
+        speed: processedCount / ((Date.now() - startTime) / 1000),
+        elapsedTime: Date.now() - startTime,
+        failedCount: failedCount
+      })
+    }
   }
 
   // 智能分块算法：按文件大小和数量优化分块，提高负载均衡

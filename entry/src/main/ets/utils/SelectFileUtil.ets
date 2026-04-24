@@ -19,7 +19,7 @@ import PrivacySpaceUtil from './PrivacySpaceUtil'
 import RecentPlayUtil from './RecentPlayUtil'
 import SubtitleUtil from './SubtitleUtil'
 import { coverEventBus } from './CoverEventUtil'
-import { extractVideoMetadataInTaskPool } from './TaskpoolUtil'
+import { extractVideoMetadataInTaskPool, MetadataExtractionResult } from './TaskpoolUtil'
 import { systemDateTime } from '@kit.BasicServicesKit'
 import { PrivacyVideoRepository } from '../repository/PrivacyVideoRepository'
 import { VideoRepository } from '../repository/VideoRepository'
@@ -658,6 +658,83 @@ export default class SelectFileUtil {
         salmonLogger.addLog(TAG, '导入视频发生错误, 原因是：' + error, true)
       }
     }
+  }
+
+  /**
+   * 使用预提取的元数据添加文件（批量导入优化：跳过元数据提取，避免逐文件等待 TaskPool）
+   */
+  static async addFileWithMetadata(context: Context, sandbox_video: string, sandbox_path: string,
+    uri: string, video_meta_data: VideoMetadata[], extractionResult: MetadataExtractionResult,
+    file_folder?: FileFolder) {
+    if (!extractionResult.success) {
+      salmonLogger.addLog(TAG, 'TaskPool 元数据提取失败: ' + extractionResult.error, true)
+      return
+    }
+
+    const metadata = extractionResult.metadata
+    const pixelMap = extractionResult.pixelMap
+    const fileSize = extractionResult.fileSize
+    const fileName = extractionResult.fileName
+
+    const fileQueue = ConcurrencyManagerUtil.getFileQueue(uri)
+    await fileQueue.run(async () => {
+      const dataLock = ConcurrencyManagerUtil.getLock('global_data')
+      await dataLock.acquire()
+      try {
+        if (!file_folder) {
+          const folderName = FileFolderUtil.extractRootFolderNameFromUri(uri, fileName)
+          if (folderName) {
+            const folderLock = ConcurrencyManagerUtil.getLock(`folder_${folderName}`)
+            await folderLock.acquire()
+            try {
+              const folderRepo = FolderRepository.getInstance()
+              const latestFolders = await folderRepo.findAllWithVideos()
+              const existingFolder = latestFolders.find(i => i.name === folderName)
+              if (!existingFolder) {
+                const newFolders = await FileFolderUtil.createNewFolder(context, folderName)
+                file_folder = newFolders.find(item => item.name === folderName)
+              } else {
+                file_folder = FileFolderUtil.toFileFolder(existingFolder)
+              }
+            } finally {
+              folderLock.release()
+            }
+          }
+        }
+        const isDuplicate = await FileFolderUtil.existsVideoInFolders(context, uri, fileName)
+        if (!isDuplicate) {
+          if (PrivacySpaceUtil.getPrivacyMode()!) {
+            await SelectFileUtil.copyFileToPrivacySpace(context, video_meta_data, uri, sandbox_video,
+              sandbox_path, systemDateTime.getTime(true).toString(), metadata!, fileName, fileSize, pixelMap)
+          } else {
+            const videoInfo =
+              await VideoInfoUtil.setVideoInfoOptimized(systemDateTime.getTime(true).toString(), uri, fileName,
+                metadata!, sandbox_video, sandbox_path, fileSize, pixelMap)
+            coverEventBus.emit('coverReady', { date: videoInfo.date })
+            const folderRepo = FolderRepository.getInstance()
+            const targetFolder = file_folder
+              ? await folderRepo.findByDate(file_folder.date)
+              : (await folderRepo.findAllWithVideos())[0]
+            if (targetFolder && targetFolder.id !== undefined) {
+              const videoEntity = FileFolderUtil.toVideoEntity(videoInfo, targetFolder.id)
+              const videoRepo = VideoRepository.getInstance()
+              await videoRepo.insert(videoEntity)
+            }
+          }
+        }
+      } finally {
+        dataLock.release()
+      }
+    })
+  }
+
+  static async processSingleFileWithMetadata(uri: string, context: Context, sandbox_video: string,
+    sandbox_path: string, video_meta_data: VideoMetadata[], extractionResult: MetadataExtractionResult,
+    fileFolder?: FileFolder): Promise<void> {
+    await PermissionUtil.persistPermission(uri)
+    await SelectFileUtil.addFileWithMetadata(
+      context, sandbox_video, sandbox_path, uri, video_meta_data, extractionResult, fileFolder
+    )
   }
 
   static async processSingleFile(uri: string, context: Context, sandbox_video: string, sandbox_path: string,
