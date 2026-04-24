@@ -96,6 +96,10 @@ export interface PlayerControllerInterface {
 
   onVolumeKeyEvent(event: KeyEvent): void
   handleAreaChange(newValue: Area): void
+
+  onAppear(): Promise<void>
+  onDisappear(): void
+  onWillDisappear(): Promise<void>
 }
 
 // 真正的工厂 controller

@@ -1,10 +1,8 @@
-import PermissionUtil from '../../utils/PermissionUtil'
 import { window } from '@kit.ArkUI'
 import ToolsUtil from '../../utils/ToolsUtil'
 import VideoInfoUtil from '../../utils/VideoInfoUtil'
 import VideoOperateUtil from '../../utils/VideoOperateUtil'
 import { VideoMetadata } from '../../interfaces/VideoMetadataInterface'
-import Preferences from '../../database/Preferences'
 import { PathUtils } from '../../utils/PathUtils'
 import SelectFileUtil from '../../utils/SelectFileUtil'
 import { PlayerSideBarComponent } from '../../component/PlayerComponent/PlayerSideBarComponent'
@@ -119,39 +117,17 @@ export struct Player { // 播放页
 
   async aboutToAppear(): Promise<void> {
     ToolsUtil.addLogger("开始执行aboutToAppear方法", false, this.pathStack)
-    PermissionUtil.applyContinuousTask()
-    try {
-      await (await this.windowClass)?.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
-      WindowUtil.setKeepScreenStatus(PathUtils.appContext!, true)
-      this.player.repeatMode = Preferences.getRepeatModeState(PathUtils.appContext!)
-      const videoSpeed = Preferences.getVideoSpeed(PathUtils.appContext!)
-      this.player.speed = parseFloat(videoSpeed?.replace('x', '') || '1')
-      WindowUtil.setBarState(PathUtils.appContext!, false, false)
-    } catch (error) {
-      ToolsUtil.addLogger(`播放错误 ${error}`, true, this.pathStack)
-    }
+    await this.player.onAppear()
     ToolsUtil.addLogger("aboutToAppear方法执行完成", false, this.pathStack)
   }
 
   async aboutToDisappear(): Promise<void> {
     ToolsUtil.addLogger("开始执行aboutToDisappear方法", false, this.pathStack)
-    VideoOperateUtil.setBrightness(-1)
-    WindowUtil.recoveryBarColor()
-    Preferences.saveVideoSpeed(PathUtils.appContext!,
-      (VideoInfoUtil.videoSpeedListAll.includes(this.player.speed) ? this.player.speed : 1) + 'x')
-    Preferences.saveRepeatModeState(PathUtils.appContext!, this.player.repeatMode)
+    this.player.onDisappear()
     this.saveSubtitlePreferenceForCurrentVideo()
     WindowUtil.setBarState(PathUtils.appContext!, true, true)
     clearTimeout(this.exitVideoTime)
     this.player.cancelSubscribe()
-    AppStorage.delete('nowPlayingData')
-    try {
-      this.player.audioVolumeManager?.off('streamVolumeChange')
-      this.player.audioVolumeManager = null
-      ToolsUtil.addLogger("取消音量变化监听完成", false, this.pathStack)
-    } catch (error) {
-      ToolsUtil.addLogger(`音量监听取消错误 ${error}`, true, this.pathStack)
-    }
     this.player.release()
     ToolsUtil.addLogger("释放播放器资源完成", false, this.pathStack)
     ToolsUtil.addLogger("aboutToDisappear方法执行完成", false, this.pathStack)
@@ -401,28 +377,8 @@ export struct Player { // 播放页
     .onWillDisappear(async () => {
       ToolsUtil.addLogger("开始执行onWillDisappear生命周期", false, this.pathStack)
       this.saveSubtitlePreferenceForCurrentVideo()
-      VideoOperateUtil.saveLastPlayVideoIndex(this.player.videoMetaDataList, this.player.nowPlaying?.date)
-      if (this.player.videoMetaDataList.length > 0 && this.player.playTime > 0) {
-        VideoOperateUtil.saveVideoTime(this.player.playTime, this.player.nowPlaying!, this.player.videoMetaDataList,
-          PathUtils.appContext!)
-        ToolsUtil.addLogger("保存视频播放时间完成", false, this.pathStack)
-      }
-      PermissionUtil.applyStopContinuousTask()
-      PiPWindowUtil.destroyPipController()
-      try {
-        WindowUtil.setKeepScreenStatus(PathUtils.appContext!, false)
-        if (canIUse('SystemCapability.Window.SessionManager')) {
-          await (await this.windowClass)?.setSpecificSystemBarEnabled('status', true)
-          await (await this.windowClass)?.setSpecificSystemBarEnabled('navigationIndicator', true)
-          ToolsUtil.addLogger("恢复系统栏显示完成", false, this.pathStack)
-        }
-        await (await this.windowClass)?.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
-        await this.player?.avSession?.stopCasting()
-        await VideoOperateUtil.releaseAVImageGenerator()
-        this.player.release()
-      } catch (error) {
-        ToolsUtil.addLogger(`onWillDisappear中发生错误：${error}`, true, this.pathStack)
-      }
+      await this.player.onWillDisappear()
+      this.player.release()
       ToolsUtil.addLogger("onWillDisappear生命周期执行完成", false, this.pathStack)
     })
     .hideTitleBar(true)

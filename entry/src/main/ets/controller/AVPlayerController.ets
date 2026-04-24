@@ -927,4 +927,55 @@ export class AVPlayerController implements PlayerControllerInterface {
     this.screenHeight = Math.floor(new Number(newValue.height).valueOf())
     this.setRotation()
   }
+
+  async onAppear(): Promise<void> {
+    PermissionUtil.applyContinuousTask()
+    try {
+      await (await WindowUtil.getWindow())?.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
+      WindowUtil.setKeepScreenStatus(PathUtils.appContext!, true)
+      this.repeatMode = Preferences.getRepeatModeState(PathUtils.appContext!)
+      const videoSpeed = Preferences.getVideoSpeed(PathUtils.appContext!)
+      this.speed = parseFloat(videoSpeed?.replace('x', '') || '1')
+      WindowUtil.setBarState(PathUtils.appContext!, false, false)
+    } catch (error) {
+      salmonLogger.addLog(TAG, `onAppear error: ${error}`, true)
+    }
+  }
+
+  onDisappear(): void {
+    VideoOperateUtil.setBrightness(-1)
+    WindowUtil.recoveryBarColor()
+    AppStorage.delete('nowPlayingData')
+    Preferences.saveVideoSpeed(PathUtils.appContext!,
+      (VideoInfoUtil.videoSpeedListAll.includes(this.speed) ? this.speed : 1) + 'x')
+    Preferences.saveRepeatModeState(PathUtils.appContext!, this.repeatMode)
+    try {
+      this.audioVolumeManager?.off('streamVolumeChange')
+      this.audioVolumeManager = null
+    } catch (error) {
+      salmonLogger.addLog(TAG, `音量监听取消错误 ${error}`, true)
+    }
+  }
+
+  async onWillDisappear(): Promise<void> {
+    VideoOperateUtil.saveLastPlayVideoIndex(this.videoMetaDataList, this.nowPlaying?.date)
+    if (this.videoMetaDataList.length > 0 && this.playTime > 0) {
+      VideoOperateUtil.saveVideoTime(this.playTime, this.nowPlaying!, this.videoMetaDataList,
+        PathUtils.appContext!)
+    }
+    PermissionUtil.applyStopContinuousTask()
+    PiPWindowUtil.destroyPipController()
+    try {
+      WindowUtil.setKeepScreenStatus(PathUtils.appContext!, false)
+      if (canIUse('SystemCapability.Window.SessionManager')) {
+        await (await WindowUtil.getWindow())?.setSpecificSystemBarEnabled('status', true)
+        await (await WindowUtil.getWindow())?.setSpecificSystemBarEnabled('navigationIndicator', true)
+      }
+      await (await WindowUtil.getWindow())?.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
+      await this.avSession?.stopCasting()
+      await VideoOperateUtil.releaseAVImageGenerator()
+    } catch (error) {
+      salmonLogger.addLog(TAG, `onWillDisappear error: ${error}`, true)
+    }
+  }
 }

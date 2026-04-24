@@ -41,7 +41,6 @@ import { VideoButtonsComponent } from '../../component/PlayerComponent/VideoButt
 import { VideoSettingComponent } from '../../component/PlayerComponent/VideoSettingComponent'
 import { VideoSliderComponent } from '../../component/PlayerComponent/VideoSliderComponent'
 import { VideoTopComponent } from '../../component/PlayerComponent/VideoTopComponent'
-import Preferences from '../../database/Preferences'
 
 const TAG = 'MpvPlayer'
 
@@ -74,36 +73,12 @@ export struct MpvPlayer {
   @Local exitVideoTime: number = 0
 
   async aboutToAppear(): Promise<void> {
-    this.mpv.prepare()
-    PermissionUtil.applyContinuousTask()
-    try {
-      await (await this.mpv.windowClass)?.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
-      WindowUtil.setKeepScreenStatus(PathUtils.appContext!, true)
-      WindowUtil.setBarState(PathUtils.appContext!, false, false)
-    } catch (error) {
-      salmonLogger.addLog(TAG, 'setPreferredOrientation error:' + error, true)
-    }
-    this.mpv.repeatMode = Preferences.getRepeatModeState(PathUtils.appContext!)
-    const videoSpeed = Preferences.getVideoSpeed(PathUtils.appContext!)
-    this.mpv.speed = parseFloat(videoSpeed?.replace('x', '') || '1')
-    WindowUtil.enableLandscapeMultiWindow(this.mpv.windowClass)
-    this.mpv.initVolumeAndBrightness()
+    await this.mpv.onAppear()
   }
 
   aboutToDisappear(): void {
-    VideoOperateUtil.setBrightness(-1)
-    WindowUtil.recoveryBarColor()
-    AppStorage.delete('nowPlayingData')
+    this.mpv.onDisappear()
     clearTimeout(this.exitVideoTime)
-    Preferences.saveVideoSpeed(PathUtils.appContext!, this.mpv.speed + 'x')
-    Preferences.saveRepeatModeState(PathUtils.appContext!, this.mpv.repeatMode)
-    try {
-      this.mpv.audioVolumeManager?.off('streamVolumeChange')
-      this.mpv.audioVolumeManager = null
-      ToolsUtil.addLogger("取消音量变化监听完成", false, this.pathStack)
-    } catch (error) {
-      ToolsUtil.addLogger(`音量监听取消错误 ${error}`, true, this.pathStack)
-    }
   }
 
   build() {
@@ -316,20 +291,7 @@ export struct MpvPlayer {
     })
     .onWillDisappear(async () => {
       this.exitVideo(false)
-      if (this.mpv.videoMetaDataList.length > 0 && this.mpv.playTime > 0) {
-        VideoOperateUtil.saveVideoTime(this.mpv.playTime, this.mpv.nowPlaying!, this.mpv.videoMetaDataList,
-          PathUtils.appContext!)
-      }
-      PermissionUtil.applyStopContinuousTask()
-      WindowUtil.setKeepScreenStatus(PathUtils.appContext!, false)
-      WindowUtil.setBarState(PathUtils.appContext!, true, true)
-      PiPWindowUtil.destroyPipController()
-      try {
-        await (await this.mpv.windowClass)?.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
-        await this.mpv.avSession?.stopCasting()
-      } catch (error) {
-        ToolsUtil.addLogger(`onWillDisappear中发生错误：${error}`, true, this.pathStack)
-      }
+      await this.mpv.onWillDisappear()
     })
     .onBackPressed(() => {
       if (this.sideBarStatus) {
