@@ -10,12 +10,23 @@ import { SweetRepeatMode } from '../common/enum/SweetRepeatMode'
 import { PlayerControllerInterface } from './PlayerControllerFactory'
 import { salmonLogger } from 'salmonlogger'
 import { window } from '@kit.ArkUI'
+import { KeyCode } from '@kit.InputKit'
 import {
   AUTO_HIDE_SHOW_CONTROL_TIME,
   IMAGE_ANALYZER_CONFIG,
   LEFT_ZONE_DIVISION,
+  MAX_SCALE_FACTOR,
+  MAX_WIDTH_MULTIPLIER,
+  MIN_SCALE_FACTOR,
+  MIN_WIDTH_MULTIPLIER,
+  PINCH_SCALE_SENSITIVITY,
   RIGHT_ZONE_DIVISION,
-  SCREEN_DIVISIONS
+  SCREEN_DIVISIONS,
+  SCREEN_HALF_DIVIDER,
+  SWIPE_THRESHOLD,
+  VERTICAL_PAN_SENSITIVITY,
+  VOLUME_PAN_MULTIPLIER,
+  VOLUME_STEP
 } from '../common/Constants'
 import { VideoStartTimeMode } from '../common/enum/VideoStartTimeMode'
 import NavigationAddress from '../common/NavigationCommon'
@@ -32,6 +43,7 @@ import SubtitleUtil from '../utils/SubtitleUtil'
 import VideoInfoUtil from '../utils/VideoInfoUtil'
 import VideoOperateUtil from '../utils/VideoOperateUtil'
 import { WindowUtil } from '../utils/WindowUtil'
+import { XAnimation } from '../utils/AnimationUtil'
 import fileIo from '@ohos.file.fs'
 
 const TAG = 'AVPlayerController'
@@ -719,5 +731,200 @@ export class AVPlayerController implements PlayerControllerInterface {
           break
       }
     })
+  }
+
+  // ===== Pinch gesture =====
+  onPinchStart(fingerDistance: number): void {
+    VideoOperateUtil.initPinchDistance = fingerDistance
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onPinchUpdate(fingerDistance: number): void {
+    const rawScale = fingerDistance / VideoOperateUtil.initPinchDistance
+    const adjustedScale = 1 + (rawScale - 1) * PINCH_SCALE_SENSITIVITY
+    const clampedScale = Math.min(Math.max(adjustedScale, MIN_SCALE_FACTOR), MAX_SCALE_FACTOR)
+    const scaledWidth = this.playAreaWidth * clampedScale
+    const maxAllowed = VideoInfoUtil.playAreaWidth * MAX_WIDTH_MULTIPLIER
+    const minAllowed = VideoInfoUtil.playAreaWidth * MIN_WIDTH_MULTIPLIER
+    if (scaledWidth > maxAllowed || scaledWidth < minAllowed) {
+      return
+    }
+    this.playAreaWidth = scaledWidth
+    this.playAreaHeight = this.playAreaHeight * clampedScale
+    this.isZoomed = clampedScale !== 1
+    XAnimation.runWithAnimation(() => {
+      this.playAreaWidth = this.playAreaWidth
+      this.playAreaHeight = this.playAreaHeight
+    })
+  }
+
+  onPinchEnd(): void {
+    this.isZoomed = this.playAreaWidth !== VideoInfoUtil.playAreaWidth
+  }
+
+  // ===== Horizontal pan (seek) =====
+  onHorizonPanStart(): void {
+    VideoOperateUtil.lastPlayTime = this.playTime
+    this.onSwiping = true
+    this.pixelMap = null
+    this.getFrameByTime(this.playTime, true)
+  }
+
+  onHorizonPanUpdate(offsetX: number): void {
+    const timePerPixel = VideoOperateUtil.getTimePixel(this.screenWidth, this.nowPlaying?.time!)
+    this.playTime = Math.max(0,
+      Math.min(VideoOperateUtil.lastPlayTime + (offsetX * timePerPixel), this.nowPlaying?.time!))
+    this.getFrameByTime(this.playTime, false)
+  }
+
+  onHorizonPanEnd(): void {
+    this.seekTime(this.playTime)
+    this.onSwiping = false
+  }
+
+  // ===== Vertical pan (brightness/volume) =====
+  onVerticalPanStart(tapX: number): void {
+    VideoOperateUtil.leftSideSwipe = tapX < this.screenWidth / SCREEN_HALF_DIVIDER
+    VideoOperateUtil.screenBrightnessTmp = this.screenBrightness
+    this.volume = this.volumeActually
+    VideoOperateUtil.lastVolume = this.volume
+  }
+
+  onVerticalPanUpdate(offsetY: number): void {
+    const deltaYScale = offsetY / this.screenHeight * VERTICAL_PAN_SENSITIVITY
+    if (VideoOperateUtil.leftSideSwipe) {
+      this.onSwipingBrightness = true
+      this.screenBrightness = VideoOperateUtil.calNewBrightness(deltaYScale)
+      VideoOperateUtil.setBrightness(this.screenBrightness)
+    } else {
+      this.onSwipingVoice = true
+      const newVolume = VideoOperateUtil.lastVolume - deltaYScale * VOLUME_PAN_MULTIPLIER
+      this.volume = Math.min(Math.max(newVolume, VideoOperateUtil.minVolume), VideoOperateUtil.maxVolume)
+    }
+  }
+
+  onVerticalPanEnd(): void {
+    this.onSwiping = false
+    this.onSwipingVoice = false
+    this.onSwipingBrightness = false
+  }
+
+  // ===== Long press (speed up) =====
+  onLongPressAction(): void {
+    if (this.playing) {
+      VideoOperateUtil.lastSpeed = this.speed
+      this.updatePlaybackSpeed(Setting.longPressSpeed)
+      this.longPress = true
+    }
+  }
+
+  onLongPressEnd(): void {
+    this.longPress = false
+    this.updatePlaybackSpeed(VideoOperateUtil.lastSpeed)
+  }
+
+  onLongPressPanStart(tapX: number): void {
+    VideoOperateUtil.longPressStartX = tapX
+  }
+
+  onLongPressPanUpdate(tapX: number): void {
+    if (!this.longPress) {
+      return
+    }
+    const deltaX = tapX - VideoOperateUtil.longPressStartX
+    if (Math.abs(deltaX) <= SWIPE_THRESHOLD) {
+      return
+    }
+    const direction = Math.sign(deltaX)
+    const currentSpeedIndex = VideoInfoUtil.videoSpeedListAll.indexOf(this.speed)
+    const newIndex = currentSpeedIndex + direction
+    const clampedIndex = Math.max(0, Math.min(newIndex, VideoInfoUtil.videoSpeedListAll.length - 1))
+    if (clampedIndex === currentSpeedIndex) {
+      return
+    }
+    this.updatePlaybackSpeed(VideoInfoUtil.videoSpeedListAll[clampedIndex])
+    VideoOperateUtil.longPressStartX = tapX
+  }
+
+  // ===== Pan move (when zoomed) =====
+  onPanMoveStart(event: GestureEvent): void {
+    VideoOperateUtil.panStartX = event.fingerList[0]?.localX || 0
+    VideoOperateUtil.panStartY = event.fingerList[0]?.localY || 0
+  }
+
+  onPanMoveUpdate(event: GestureEvent): void {
+    const currentX = event.fingerList[0]?.localX || 0
+    const currentY = event.fingerList[0]?.localY || 0
+    const deltaX = currentX - VideoOperateUtil.panStartX
+    const deltaY = currentY - VideoOperateUtil.panStartY
+    this.translateX += deltaX
+    this.translateY += deltaY
+    VideoOperateUtil.panStartX = currentX
+    VideoOperateUtil.panStartY = currentY
+  }
+
+  // ===== Screen proportion adjustments =====
+  onSpecificVideoProportions(playAreaSize: number[]): void {
+    this.playAreaWidth = playAreaSize[0]
+    this.playAreaHeight = playAreaSize[1]
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onOriginalRatio(): void {
+    this.playAreaHeight = VideoInfoUtil.playAreaHeight
+    this.playAreaWidth = VideoInfoUtil.playAreaWidth
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onStretchedToFullScreen(): void {
+    this.playAreaHeight = this.screenHeight
+    this.playAreaWidth = this.screenWidth
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onFullScreenByWidth(): void {
+    this.playAreaWidth = this.screenWidth
+    this.playAreaHeight = (VideoInfoUtil.playAreaHeight / VideoInfoUtil.playAreaWidth) * this.screenWidth
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onFullScreenByHeight(): void {
+    this.playAreaHeight = this.screenHeight
+    this.playAreaWidth = (VideoInfoUtil.playAreaWidth / VideoInfoUtil.playAreaHeight) * this.screenHeight
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onUniformScale(scale: number): void {
+    this.playAreaHeight = scale * VideoInfoUtil.playAreaHeight
+    this.playAreaWidth = scale * VideoInfoUtil.playAreaWidth
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onVolumeKeyEvent(event: KeyEvent): void {
+    this.volume = this.volumeActually
+    const newVolume = VideoOperateUtil.changeVolume(this.volume,
+      event.keyCode === KeyCode.KEYCODE_DPAD_UP ? VOLUME_STEP : -VOLUME_STEP)
+    this.volume = newVolume
+    this.volumeActually = newVolume
+    VideoOperateUtil.lastVolume = newVolume
+  }
+
+  handleAreaChange(newValue: Area): void {
+    this.screenWidth = Math.floor(new Number(newValue.width).valueOf())
+    this.screenHeight = Math.floor(new Number(newValue.height).valueOf())
+    this.setRotation()
   }
 }
