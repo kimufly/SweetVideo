@@ -1,12 +1,9 @@
-import PermissionUtil from '../../utils/PermissionUtil'
 import { window } from '@kit.ArkUI'
 import ToolsUtil from '../../utils/ToolsUtil'
 import VideoInfoUtil from '../../utils/VideoInfoUtil'
 import VideoOperateUtil from '../../utils/VideoOperateUtil'
 import { VideoMetadata } from '../../interfaces/VideoMetadataInterface'
-import Preferences from '../../database/Preferences'
 import { PathUtils } from '../../utils/PathUtils'
-import SelectFileUtil from '../../utils/SelectFileUtil'
 import { PlayerSideBarComponent } from '../../component/PlayerComponent/PlayerSideBarComponent'
 import { AVCastPickerBuilder } from '../../component/PlayerComponent/AVCastPickerBuilder'
 import { AudioTrackComponent } from '../../component/PlayerComponent/AudioTrackComponent'
@@ -20,7 +17,6 @@ import { VideoSettingComponent } from '../../component/PlayerComponent/VideoSett
 import { SweetRepeatMode } from '../../common/enum/SweetRepeatMode'
 import NavigationAddress, { PlayerParams } from '../../common/NavigationCommon'
 import { WindowUtil } from '../../utils/WindowUtil'
-import { KeyCode } from '@kit.InputKit'
 import { XAnimation } from '../../utils/AnimationUtil'
 import SubtitleUtil from '../../utils/SubtitleUtil'
 import { Subtitle3DMode, SubtitleMode } from '../../common/enum/SubtitleMode'
@@ -37,19 +33,9 @@ import { XComponents } from '../../component/PlayerComponent/XComponents'
 import { VideoLayoutComponent } from '../../component/PlayerComponent/VideoLayoutComponent'
 import {
   DEFAULT_ANGLE,
-  MAX_SCALE_FACTOR,
-  MAX_WIDTH_MULTIPLIER,
-  MIN_SCALE_FACTOR,
-  MIN_WIDTH_MULTIPLIER,
   MIRRORED_ANGLE,
   NO_BLUR_AMOUNT,
-  PINCH_SCALE_SENSITIVITY,
-  PRIVACY_BACKGROUND_BLUR_AMOUNT,
-  SCREEN_HALF_DIVIDER,
-  SWIPE_THRESHOLD,
-  VERTICAL_PAN_SENSITIVITY,
-  VOLUME_PAN_MULTIPLIER,
-  VOLUME_STEP
+  PRIVACY_BACKGROUND_BLUR_AMOUNT
 } from '../../common/Constants'
 import { AISubtitleComponent } from '../../component/PlayerComponent/AIAsrComponent'
 import PiPWindowUtil from '../../utils/PiPWindowUtil'
@@ -82,27 +68,23 @@ export struct Player { // 播放页
   @Local sideBarStatusTmp: Visibility = Visibility.Hidden
   @Local sideBarStatus: boolean = false
   @Local isAIAsrShown: boolean = false
-  @Local currentSpeedIndex: number = 0
   @Local subtitleVisibility: Visibility = Visibility.Visible
   @Local subtitle3DMode: Subtitle3DMode = Subtitle3DMode.DISABLED
-  @Consumer('pathStack') pathStack: NavPathStack = new NavPathStack()
-  @Local exitVideoTime: number = 0
-  @Local isAdjustingSubtitleOffset: boolean = false
   subtitleTimestampInputDialog: CustomDialogController = new CustomDialogController({
     builder: SubtitleOffsetDialog({
       getCurrentValue: () => SubtitleUtil.offsetMillis,
       onOffsetPreview: (offset: number) => {
-        this.refreshExternalSubtitlePreview(offset)
+        this.player.refreshExternalSubtitlePreview(offset)
       },
       onCloseButton: () => {
         this.cancelSubtitleOffsetSession()
         this.subtitleTimestampInputDialog.close()
       },
       onPrevSubtitle: (currentOffset: number) => {
-        return this.getAdjacentSubtitleOffset('prev', currentOffset)
+        return this.player.getAdjacentSubtitleOffset('prev', currentOffset)
       },
       onNextSubtitle: (currentOffset: number) => {
-        return this.getAdjacentSubtitleOffset('next', currentOffset)
+        return this.player.getAdjacentSubtitleOffset('next', currentOffset)
       },
       confirm: (input: number) => {
         if (Number.isNaN(input)) {
@@ -111,9 +93,10 @@ export struct Player { // 播放页
           this.subtitleTimestampInputDialog.close()
         } else if (Math.abs(input) <= 50000) {
           SubtitleUtil.offsetMillis = input
-          this.refreshExternalSubtitlePreview(input)
+          this.player.refreshExternalSubtitlePreview(input)
           this.finishSubtitleOffsetSession()
-          this.saveSubtitlePreferenceForCurrentVideo()
+          this.player.saveSubtitlePreferenceForCurrentVideo(this.subtitleVisibility, this.isAIAsrShown,
+            this.subtitle3DMode)
           this.subtitleTimestampInputDialog.close()
         } else {
           ToolsUtil.showToast('输入错误：请输入 -50000 到 50000 的整数')
@@ -127,45 +110,26 @@ export struct Player { // 播放页
       this.cancelSubtitleOffsetSession()
     }
   })
+  @Consumer('pathStack') pathStack: NavPathStack = new NavPathStack()
+  @Local exitVideoTime: number = 0
+  @Local isAdjustingSubtitleOffset: boolean = false
   private subtitleOffsetPreviewBase: number = 0
   private subtitleOffsetShouldResumePlayback: boolean = false
   private isApplyingSubtitleMetadata: boolean = false
 
   async aboutToAppear(): Promise<void> {
     ToolsUtil.addLogger("开始执行aboutToAppear方法", false, this.pathStack)
-    PermissionUtil.applyContinuousTask()
-    try {
-      await (await this.windowClass)?.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
-      WindowUtil.setKeepScreenStatus(PathUtils.appContext!, true)
-      this.player.repeatMode = Preferences.getRepeatModeState(PathUtils.appContext!)
-      const videoSpeed = Preferences.getVideoSpeed(PathUtils.appContext!)
-      this.player.speed = parseFloat(videoSpeed?.replace('x', '') || '1')
-      WindowUtil.setBarState(PathUtils.appContext!, false, false)
-    } catch (error) {
-      ToolsUtil.addLogger(`播放错误 ${error}`, true, this.pathStack)
-    }
+    await this.player.onAppear()
     ToolsUtil.addLogger("aboutToAppear方法执行完成", false, this.pathStack)
   }
 
   async aboutToDisappear(): Promise<void> {
     ToolsUtil.addLogger("开始执行aboutToDisappear方法", false, this.pathStack)
-    VideoOperateUtil.setBrightness(-1)
-    WindowUtil.recoveryBarColor()
-    Preferences.saveVideoSpeed(PathUtils.appContext!,
-      (VideoInfoUtil.videoSpeedListAll.includes(this.player.speed) ? this.player.speed : 1) + 'x')
-    Preferences.saveRepeatModeState(PathUtils.appContext!, this.player.repeatMode)
-    this.saveSubtitlePreferenceForCurrentVideo()
+    this.player.onDisappear()
+    this.player.saveSubtitlePreferenceForCurrentVideo(this.subtitleVisibility, this.isAIAsrShown, this.subtitle3DMode)
     WindowUtil.setBarState(PathUtils.appContext!, true, true)
     clearTimeout(this.exitVideoTime)
     this.player.cancelSubscribe()
-    AppStorage.delete('nowPlayingData')
-    try {
-      this.player.audioVolumeManager?.off('streamVolumeChange')
-      this.player.audioVolumeManager = null
-      ToolsUtil.addLogger("取消音量变化监听完成", false, this.pathStack)
-    } catch (error) {
-      ToolsUtil.addLogger(`音量监听取消错误 ${error}`, true, this.pathStack)
-    }
     this.player.release()
     ToolsUtil.addLogger("释放播放器资源完成", false, this.pathStack)
     ToolsUtil.addLogger("aboutToDisappear方法执行完成", false, this.pathStack)
@@ -231,12 +195,7 @@ export struct Player { // 播放页
               this.player.fastForward()
             },
             onKeyCodeUpAndDown: (event: KeyEvent) => {
-              this.player.volume = this.player.volumeActually
-              const newVolume = VideoOperateUtil.changeVolume(this.player.volume,
-                event.keyCode === KeyCode.KEYCODE_DPAD_UP ? VOLUME_STEP : -VOLUME_STEP)
-              this.player.volume = newVolume
-              this.player.volumeActually = newVolume
-              VideoOperateUtil.lastVolume = newVolume
+              this.player.onVolumeKeyEvent(event)
             },
           })
 
@@ -310,116 +269,49 @@ export struct Player { // 播放页
               }
             },
             onVerticalPanStart: (tapX: number) => {
-              VideoOperateUtil.leftSideSwipe = tapX < this.player.screenWidth / SCREEN_HALF_DIVIDER
-              VideoOperateUtil.screenBrightnessTmp = this.player.screenBrightness
-              this.player.volume = this.player.volumeActually
-              VideoOperateUtil.lastVolume = this.player.volume // 记录起始音量
+              this.player.onVerticalPanStart(tapX)
             },
             onVerticalPanUpdate: (offsetY: number) => {
-              const deltaYScale = offsetY / this.player.screenHeight * VERTICAL_PAN_SENSITIVITY
-              if (VideoOperateUtil.leftSideSwipe) {
-                this.player.onSwipingBrightness = true
-                this.player.screenBrightness = VideoOperateUtil.calNewBrightness(deltaYScale)
-                VideoOperateUtil.setBrightness(this.player.screenBrightness)
-              } else {
-                this.player.onSwipingVoice = true
-                const newVolume = VideoOperateUtil.lastVolume - deltaYScale * VOLUME_PAN_MULTIPLIER
-                this.player.volume =
-                  Math.min(Math.max(newVolume, VideoOperateUtil.minVolume), VideoOperateUtil.maxVolume)
-              }
+              this.player.onVerticalPanUpdate(offsetY)
             },
             onVerticalPanEnd: () => {
-              this.player.onSwiping = false
-              this.player.onSwipingVoice = false
-              this.player.onSwipingBrightness = false
+              this.player.onVerticalPanEnd()
             },
             onHorizonPanStart: () => {
-              VideoOperateUtil.lastPlayTime = this.player.playTime
-              this.player.onSwiping = true
-              this.player.pixelMap = null
-              this.player.getFrameByTime(this.player.playTime, true)
+              this.player.onHorizonPanStart()
             },
             onHorizonPanUpdate: (offsetX: number) => {
-              const timePerPixel = VideoOperateUtil.getTimePixel(this.player.screenWidth, this.player.nowPlaying?.time!)
-              this.player.playTime = Math.max(0,
-                Math.min(VideoOperateUtil.lastPlayTime + (offsetX * timePerPixel), this.player.nowPlaying?.time!))
-              this.player.getFrameByTime(this.player.playTime, false)
+              this.player.onHorizonPanUpdate(offsetX)
             },
             onHorizonPanEnd: () => {
-              this.player.seekTime(this.player.playTime)
-              this.player.onSwiping = false
+              this.player.onHorizonPanEnd()
             },
             onPinchStart: (fingerDistance: number) => {
-              VideoOperateUtil.initPinchDistance = fingerDistance
-              this.player.translateX = 0
-              this.player.translateY = 0
+              this.player.onPinchStart(fingerDistance)
             },
             onPinchUpdate: (fingerDistance: number) => {
-              const rawScale = fingerDistance / VideoOperateUtil.initPinchDistance
-              const adjustedScale = 1 + (rawScale - 1) * PINCH_SCALE_SENSITIVITY // 计算调整后的缩放比例
-              const clampedScale = Math.min(Math.max(adjustedScale, MIN_SCALE_FACTOR), MAX_SCALE_FACTOR)
-              const scaledWidth = this.player.playAreaWidth * clampedScale // 计算缩放后的播放区域宽度
-              const maxAllowed = VideoInfoUtil.playAreaWidth * MAX_WIDTH_MULTIPLIER
-              const minAllowed = VideoInfoUtil.playAreaWidth * MIN_WIDTH_MULTIPLIER
-              if (scaledWidth > maxAllowed || scaledWidth < minAllowed) { // 检查缩放是否超出允许范围
-                return
-              }
-              this.player.playAreaWidth = scaledWidth
-              this.player.playAreaHeight = this.player.playAreaHeight * clampedScale
-              this.player.isZoomed = clampedScale !== 1
-              XAnimation.runWithAnimation(() => {
-                this.player.playAreaWidth = this.player.playAreaWidth
-                this.player.playAreaHeight = this.player.playAreaHeight
-              })
+              this.player.onPinchUpdate(fingerDistance)
             },
             onPinchEnd: () => {
-              this.player.isZoomed = this.player.playAreaWidth !== VideoInfoUtil.playAreaWidth
+              this.player.onPinchEnd()
             },
             onLongPressAction: () => {
-              if (this.player.playing) {
-                VideoOperateUtil.lastSpeed = this.player.speed
-                this.player.updatePlaybackSpeed(Setting.longPressSpeed)
-                this.player.longPress = true
-                this.currentSpeedIndex = VideoInfoUtil.videoSpeedListAll.indexOf(Setting.longPressSpeed)
-              }
+              this.player.onLongPressAction()
             },
             onLongPressEnd: () => {
-              this.player.longPress = false
-              this.player.updatePlaybackSpeed(VideoOperateUtil.lastSpeed)
+              this.player.onLongPressEnd()
             },
             onLongPressPanStart: (tapX: number) => {
-              VideoOperateUtil.longPressStartX = tapX
+              this.player.onLongPressPanStart(tapX)
             },
             onLongPressPanUpdate: (tapX: number) => {
-              if (this.player.longPress) { // 长按状态下的滑动处理
-                const deltaX = tapX - VideoOperateUtil.longPressStartX
-                if (Math.abs(deltaX) <= SWIPE_THRESHOLD) { // 未达到滑动阈值则直接返回
-                  return
-                }
-                const direction = Math.sign(deltaX)
-                const newIndex = this.currentSpeedIndex + direction // 计算新速度索引并限制在有效范围内
-                const clampedIndex = Math.max(0, Math.min(newIndex, VideoInfoUtil.videoSpeedListAll.length - 1))
-                if (clampedIndex === this.currentSpeedIndex) { // 索引变化时才更新播放速度
-                  return
-                }
-                this.currentSpeedIndex = clampedIndex
-                this.player.updatePlaybackSpeed(VideoInfoUtil.videoSpeedListAll[this.currentSpeedIndex])
-                VideoOperateUtil.longPressStartX = tapX // 重置起始点实现分档切换效果
-              }
+              this.player.onLongPressPanUpdate(tapX)
             },
             onPanMoveStart: (event: GestureEvent) => {
-              VideoOperateUtil.panStartX = event.fingerList[0]?.localX || 0
-              VideoOperateUtil.panStartY = event.fingerList[0]?.localY || 0
+              this.player.onPanMoveStart(event)
             },
             onPanMoveUpdate: (event: GestureEvent) => {
-              const currentX = event.fingerList[0]?.localX || 0
-              const currentY = event.fingerList[0]?.localY || 0
-              const deltaX = currentX - VideoOperateUtil.panStartX
-              const deltaY = currentY - VideoOperateUtil.panStartY
-              this.player.translateX += deltaX
-              this.player.translateY += deltaY
-              VideoOperateUtil.panStartX = currentX
-              VideoOperateUtil.panStartY = currentY
+              this.player.onPanMoveUpdate(event)
             }
           })
             .hitTestBehavior(HitTestMode.Transparent)
@@ -446,12 +338,11 @@ export struct Player { // 播放页
 
           AISubtitleComponent({
             isAIAsrShown: this.isAIAsrShown,
-            player: this.player,
+            showControl: this.player.showControl,
+            screenHeight: this.player.screenHeight,
           })
         }.onAreaChange((_oldValue: Area, newValue: Area) => {
-          this.player.screenWidth = Math.floor(new Number(newValue.width).valueOf())
-          this.player.screenHeight = Math.floor(new Number(newValue.height).valueOf())
-          this.player.setRotation()
+          this.player.handleAreaChange(newValue)
         }).backgroundColor($r('sys.color.black'))
       }
       .showControlButton(false)
@@ -492,29 +383,9 @@ export struct Player { // 播放页
     })
     .onWillDisappear(async () => {
       ToolsUtil.addLogger("开始执行onWillDisappear生命周期", false, this.pathStack)
-      this.saveSubtitlePreferenceForCurrentVideo()
-      VideoOperateUtil.saveLastPlayVideoIndex(this.player.videoMetaDataList, this.player.nowPlaying?.date)
-      if (this.player.videoMetaDataList.length > 0 && this.player.playTime > 0) {
-        VideoOperateUtil.saveVideoTime(this.player.playTime, this.player.nowPlaying!, this.player.videoMetaDataList,
-          PathUtils.appContext!)
-        ToolsUtil.addLogger("保存视频播放时间完成", false, this.pathStack)
-      }
-      PermissionUtil.applyStopContinuousTask()
-      PiPWindowUtil.destroyPipController()
-      try {
-        WindowUtil.setKeepScreenStatus(PathUtils.appContext!, false)
-        if (canIUse('SystemCapability.Window.SessionManager')) {
-          await (await this.windowClass)?.setSpecificSystemBarEnabled('status', true)
-          await (await this.windowClass)?.setSpecificSystemBarEnabled('navigationIndicator', true)
-          ToolsUtil.addLogger("恢复系统栏显示完成", false, this.pathStack)
-        }
-        await (await this.windowClass)?.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
-        await this.player?.avSession?.stopCasting()
-        await VideoOperateUtil.releaseAVImageGenerator()
-        this.player.release()
-      } catch (error) {
-        ToolsUtil.addLogger(`onWillDisappear中发生错误：${error}`, true, this.pathStack)
-      }
+      this.player.saveSubtitlePreferenceForCurrentVideo(this.subtitleVisibility, this.isAIAsrShown, this.subtitle3DMode)
+      await this.player.onWillDisappear()
+      this.player.release()
       ToolsUtil.addLogger("onWillDisappear生命周期执行完成", false, this.pathStack)
     })
     .hideTitleBar(true)
@@ -569,48 +440,22 @@ export struct Player { // 播放页
         ToolsUtil.showToast(toastMessage)
       },
       onSpecificVideoProportions: (playAreaSize: number[]) => {
-        this.player.playAreaWidth = playAreaSize[0]
-        this.player.playAreaHeight = playAreaSize[1]
-        this.player.isZoomed = false
-        this.player.translateX = 0
-        this.player.translateY = 0
+        this.player.onSpecificVideoProportions(playAreaSize)
       },
       onOriginalRatio: () => {
-        this.player.playAreaHeight = VideoInfoUtil.playAreaHeight
-        this.player.playAreaWidth = VideoInfoUtil.playAreaWidth
-        this.player.isZoomed = false
-        this.player.translateX = 0
-        this.player.translateY = 0
+        this.player.onOriginalRatio()
       },
       onStretchedToFullScreen: () => {
-        this.player.playAreaHeight = this.player.screenHeight
-        this.player.playAreaWidth = this.player.screenWidth
-        this.player.isZoomed = false
-        this.player.translateX = 0
-        this.player.translateY = 0
+        this.player.onStretchedToFullScreen()
       },
       onFullScreenByWidth: () => {
-        this.player.playAreaWidth = this.player.screenWidth
-        this.player.playAreaHeight =
-          (VideoInfoUtil.playAreaHeight / VideoInfoUtil.playAreaWidth) * this.player.screenWidth
-        this.player.isZoomed = false
-        this.player.translateX = 0
-        this.player.translateY = 0
+        this.player.onFullScreenByWidth()
       },
       onFullScreenByHeight: () => {
-        this.player.playAreaHeight = this.player.screenHeight
-        this.player.playAreaWidth =
-          (VideoInfoUtil.playAreaWidth / VideoInfoUtil.playAreaHeight) * this.player.screenHeight
-        this.player.isZoomed = false
-        this.player.translateX = 0
-        this.player.translateY = 0
+        this.player.onFullScreenByHeight()
       },
       onUniformScale: (scale: number) => {
-        this.player.playAreaHeight = scale * VideoInfoUtil.playAreaHeight
-        this.player.playAreaWidth = scale * VideoInfoUtil.playAreaWidth
-        this.player.isZoomed = false
-        this.player.translateX = 0
-        this.player.translateY = 0
+        this.player.onUniformScale(scale)
       },
       onSelectedTextChange: (text: string) => {
         this.player.selectedText = text
@@ -774,14 +619,15 @@ export struct Player { // 播放页
         }
         this.subtitleOffsetPreviewBase = SubtitleUtil.offsetMillis
         this.isAdjustingSubtitleOffset = true
-        this.refreshExternalSubtitlePreview(this.subtitleOffsetPreviewBase)
+        this.player.refreshExternalSubtitlePreview(this.subtitleOffsetPreviewBase)
         this.subtitleTimestampInputDialog.open()
       },
       onInnerSubtitleClick: () => {
         this.subtitleVisibility = Visibility.Visible
         this.isAIAsrShown = false
         this.player.subtitleSelected = SubtitleMode.INNER_SUBTITLE
-        this.saveSubtitlePreferenceForCurrentVideo()
+        this.player.saveSubtitlePreferenceForCurrentVideo(this.subtitleVisibility, this.isAIAsrShown,
+          this.subtitle3DMode)
       },
       onExternalSubtitleClick: () => {
         this.activateExternalSubtitle()
@@ -790,38 +636,19 @@ export struct Player { // 播放页
         this.isAIAsrShown = !this.isAIAsrShown
         this.subtitleVisibility = Visibility.None
         this.player.subtitleSelected = SubtitleMode.AI_SUBTITLE
-        this.saveSubtitlePreferenceForCurrentVideo()
+        this.player.saveSubtitlePreferenceForCurrentVideo(this.subtitleVisibility, this.isAIAsrShown,
+          this.subtitle3DMode)
       },
     })
   }
 
   @Builder
-  AVCastPickerBuilderBridge() { // 桥接AVCastPickerBuilder避免crash
+  AVCastPickerBuilderBridge() {
     AVCastPickerBuilder()
   }
 
   private isOffsetSubtitleOverlayActive(): boolean {
     return this.isAdjustingSubtitleOffset && this.player.subtitleSelected === SubtitleMode.EXTERNAL_SUBTITLE
-  }
-
-  private refreshExternalSubtitlePreview(offset: number): void {
-    if (this.player.subtitleSelected !== SubtitleMode.EXTERNAL_SUBTITLE) {
-      return
-    }
-    this.player.subtitle = SubtitleUtil.getSubtitlesAtTime(this.player.playTime, offset)
-  }
-
-  private refreshExternalSubtitleByPlaybackTime(): void {
-    if (this.isAdjustingSubtitleOffset) {
-      return
-    }
-    if (this.player.subtitleSelected !== SubtitleMode.EXTERNAL_SUBTITLE) {
-      return
-    }
-    if (this.subtitleVisibility !== Visibility.Visible) {
-      return
-    }
-    this.player.subtitle = SubtitleUtil.getSubtitlesAtTime(this.player.playTime)
   }
 
   private resumePlaybackAfterSubtitleOffsetIfNeeded(): void {
@@ -843,35 +670,22 @@ export struct Player { // 播放页
     if (!this.isAdjustingSubtitleOffset) {
       return
     }
-    this.refreshExternalSubtitlePreview(this.subtitleOffsetPreviewBase)
+    this.player.refreshExternalSubtitlePreview(this.subtitleOffsetPreviewBase)
     this.finishSubtitleOffsetSession()
-  }
-
-  private getAdjacentSubtitleOffset(direction: 'prev' | 'next', currentOffset: number): number | undefined {
-    const targetOffset = SubtitleUtil.getAdjacentSubtitleOffset(this.player.playTime, currentOffset, direction)
-    if (targetOffset === undefined) {
-      ToolsUtil.showToast(direction === 'prev' ? '没有上一条字幕' : '没有下一条字幕')
-      return undefined
-    }
-    if (Math.abs(targetOffset) > 50000) {
-      ToolsUtil.showToast('目标字幕超出偏移范围：-50000 到 50000')
-      return undefined
-    }
-    return Math.round(targetOffset)
   }
 
   private activateExternalSubtitle(): void {
     this.isAIAsrShown = false
     this.subtitleVisibility = Visibility.Visible
     this.player.subtitleSelected = SubtitleMode.EXTERNAL_SUBTITLE
-    this.refreshExternalSubtitleByPlaybackTime()
-    this.saveSubtitlePreferenceForCurrentVideo()
+    this.player.refreshExternalSubtitleByPlaybackTime(this.isAdjustingSubtitleOffset, this.subtitleVisibility)
+    this.player.saveSubtitlePreferenceForCurrentVideo(this.subtitleVisibility, this.isAIAsrShown, this.subtitle3DMode)
   }
 
   private turnOffSubtitleDisplay(): void {
     this.isAIAsrShown = false
     this.subtitleVisibility = Visibility.None
-    this.saveSubtitlePreferenceForCurrentVideo()
+    this.player.saveSubtitlePreferenceForCurrentVideo(this.subtitleVisibility, this.isAIAsrShown, this.subtitle3DMode)
   }
 
   @Monitor('subtitle3DMode')
@@ -879,145 +693,6 @@ export struct Player { // 播放页
     if (this.isApplyingSubtitleMetadata) {
       return
     }
-    this.saveSubtitlePreferenceForCurrentVideo()
-  }
-
-  private normalizeSubtitleMode(subtitleMode?: number): SubtitleMode {
-    if (subtitleMode === SubtitleMode.EXTERNAL_SUBTITLE || subtitleMode === SubtitleMode.AI_SUBTITLE) {
-      return subtitleMode
-    }
-    return SubtitleMode.INNER_SUBTITLE
-  }
-
-  private normalizeSubtitle3DMode(subtitle3DMode?: number): Subtitle3DMode {
-    if (subtitle3DMode === Subtitle3DMode.SIDE_BY_SIDE || subtitle3DMode === Subtitle3DMode.TOP_AND_BOTTOM) {
-      return subtitle3DMode
-    }
-    return Subtitle3DMode.DISABLED
-  }
-
-  private hasSubtitlePreferenceMetadata(nowPlaying: VideoMetadata): boolean {
-    return nowPlaying.subtitle_mode !== undefined ||
-      nowPlaying.subtitle_visible !== undefined ||
-      nowPlaying.subtitle_ai_asr_shown !== undefined ||
-      nowPlaying.subtitle_3d_mode !== undefined ||
-      nowPlaying.subtitle_offset_millis !== undefined ||
-      nowPlaying.subtitle_track_id !== undefined
-  }
-
-  private hasInnerSubtitleTrack(): boolean {
-    return this.player.subtitleTrack.length > 0
-  }
-
-  private hasExternalSubtitle(): boolean {
-    return (this.player.nowPlaying?.external_subtitle_format?.length ?? 0) > 0
-  }
-
-  private applySubtitlePreferenceFromMetadata(): void {
-    const nowPlaying = this.player.nowPlaying
-    if (!nowPlaying) {
-      return
-    }
-    this.isApplyingSubtitleMetadata = true
-
-    if (!this.hasSubtitlePreferenceMetadata(nowPlaying)) {
-      this.isAIAsrShown = false
-      this.subtitle3DMode = Subtitle3DMode.DISABLED
-      SubtitleUtil.offsetMillis = 0
-
-      if (this.hasInnerSubtitleTrack()) {
-        this.subtitleVisibility = Visibility.Visible
-        this.player.subtitleSelected = SubtitleMode.INNER_SUBTITLE
-      } else if (this.hasExternalSubtitle()) {
-        this.subtitleVisibility = Visibility.Visible
-        this.player.subtitleSelected = SubtitleMode.EXTERNAL_SUBTITLE
-        this.refreshExternalSubtitleByPlaybackTime()
-      } else {
-        this.subtitleVisibility = Visibility.None
-        this.player.subtitleSelected = SubtitleMode.INNER_SUBTITLE
-      }
-      this.isApplyingSubtitleMetadata = false
-      this.saveSubtitlePreferenceForCurrentVideo()
-      return
-    }
-
-    const subtitleMode = this.normalizeSubtitleMode(nowPlaying.subtitle_mode)
-    const subtitleVisible = nowPlaying.subtitle_visible ?? true
-    const subtitleAIAsrShown = nowPlaying.subtitle_ai_asr_shown ?? false
-    const subtitle3DMode = this.normalizeSubtitle3DMode(nowPlaying.subtitle_3d_mode)
-    const subtitleTrackId = nowPlaying.subtitle_track_id ?? -1
-    let subtitleOffsetMillis = nowPlaying.subtitle_offset_millis ?? 0
-    subtitleOffsetMillis = Math.max(-50000, Math.min(50000, Math.round(subtitleOffsetMillis)))
-
-    this.subtitle3DMode = subtitle3DMode
-    SubtitleUtil.offsetMillis = subtitleOffsetMillis
-
-    if (subtitleAIAsrShown && canIUse('SystemCapability.AI.AICaption')) {
-      this.isAIAsrShown = true
-      this.subtitleVisibility = Visibility.None
-      this.player.subtitleSelected = SubtitleMode.AI_SUBTITLE
-      this.isApplyingSubtitleMetadata = false
-      this.saveSubtitlePreferenceForCurrentVideo()
-      return
-    }
-
-    this.isAIAsrShown = false
-    this.subtitleVisibility = subtitleVisible ? Visibility.Visible : Visibility.None
-    if (subtitleMode === SubtitleMode.EXTERNAL_SUBTITLE && this.hasExternalSubtitle()) {
-      this.player.subtitleSelected = SubtitleMode.EXTERNAL_SUBTITLE
-      this.refreshExternalSubtitleByPlaybackTime()
-    } else {
-      this.player.subtitleSelected = SubtitleMode.INNER_SUBTITLE
-      if (subtitleTrackId >= 0) {
-        const selectedTrack = this.player.subtitleTrack.find((track) => track.id === subtitleTrackId)
-        if (selectedTrack) {
-          this.player.selectSubtitleTrack(selectedTrack.id)
-        }
-      }
-    }
-    this.isApplyingSubtitleMetadata = false
-    this.saveSubtitlePreferenceForCurrentVideo()
-  }
-
-  private saveSubtitlePreferenceForCurrentVideo(): void {
-    const nowPlaying = this.player.nowPlaying
-    const appContext = PathUtils.appContext
-    if (!nowPlaying || !appContext) {
-      return
-    }
-
-    const subtitleMode = this.normalizeSubtitleMode(this.player.subtitleSelected)
-    const subtitleVisible = this.subtitleVisibility === Visibility.Visible
-    const subtitleAIAsrShown = this.isAIAsrShown
-    const subtitle3DMode = this.normalizeSubtitle3DMode(this.subtitle3DMode)
-    const subtitleOffsetMillis = Math.max(-50000, Math.min(50000, Math.round(SubtitleUtil.offsetMillis)))
-    const subtitleTrackId = this.player.subtitleTrackSelected
-    const hasPreferenceChanged =
-      nowPlaying.subtitle_mode !== subtitleMode ||
-        nowPlaying.subtitle_visible !== subtitleVisible ||
-        nowPlaying.subtitle_ai_asr_shown !== subtitleAIAsrShown ||
-        nowPlaying.subtitle_3d_mode !== subtitle3DMode ||
-        nowPlaying.subtitle_offset_millis !== subtitleOffsetMillis ||
-        nowPlaying.subtitle_track_id !== subtitleTrackId
-
-    if (!hasPreferenceChanged) {
-      return
-    }
-
-    nowPlaying.subtitle_mode = subtitleMode
-    nowPlaying.subtitle_visible = subtitleVisible
-    nowPlaying.subtitle_ai_asr_shown = subtitleAIAsrShown
-    nowPlaying.subtitle_3d_mode = subtitle3DMode
-    nowPlaying.subtitle_offset_millis = subtitleOffsetMillis
-    nowPlaying.subtitle_track_id = subtitleTrackId
-
-    SelectFileUtil.saveData(appContext, nowPlaying, {
-      subtitleMode,
-      subtitleVisible,
-      subtitleAIAsrShown,
-      subtitle3DMode,
-      subtitleOffsetMillis,
-      subtitleTrackId
-    })
+    this.player.saveSubtitlePreferenceForCurrentVideo(this.subtitleVisibility, this.isAIAsrShown, this.subtitle3DMode)
   }
 }

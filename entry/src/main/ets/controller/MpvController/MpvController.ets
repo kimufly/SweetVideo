@@ -33,7 +33,7 @@ import {
 import { Setting } from '../../utils/ObservedUtil';
 import { VideoStartTimeMode } from '../../common/enum/VideoStartTimeMode';
 import { VideoMetadata } from '../../interfaces/VideoMetadataInterface';
-import { SubtitleMode } from '../../common/enum/SubtitleMode';
+import { SubtitleMode, Subtitle3DMode } from '../../common/enum/SubtitleMode';
 import { PathUtils } from '../../utils/PathUtils';
 import VideoOperateUtil from '../../utils/VideoOperateUtil';
 import { MpvAudioTrack, MpvDecodingMethod, MpvSubtitleTrack } from './MpvTypes';
@@ -49,20 +49,32 @@ import AVSessionUtil from '../../utils/AVSessionUtil';
 import {
   AUTO_HIDE_SHOW_CONTROL_TIME,
   LEFT_ZONE_DIVISION,
+  MAX_SCALE_FACTOR,
+  MAX_WIDTH_MULTIPLIER,
+  MIN_SCALE_FACTOR,
+  MIN_WIDTH_MULTIPLIER,
+  PINCH_SCALE_SENSITIVITY,
   RIGHT_ZONE_DIVISION,
-  SCREEN_DIVISIONS
+  SCREEN_DIVISIONS,
+  SCREEN_HALF_DIVIDER,
+  SWIPE_THRESHOLD,
+  VERTICAL_PAN_SENSITIVITY,
+  VOLUME_PAN_MULTIPLIER,
+  VOLUME_STEP
 } from '../../common/Constants';
 import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 import { salmonLogger } from 'salmonlogger';
+import { KeyCode } from '@kit.InputKit';
 import FileFolderUtil from '../../utils/FileFolderUtil';
 import PrivacySpaceUtil from '../../utils/PrivacySpaceUtil';
 import RecentPlayUtil from '../../utils/RecentPlayUtil';
 import SelectFileUtil from '../../utils/SelectFileUtil';
-import SubtitleUtil from '../../utils/SubtitleUtil';
+import SubtitleUtil, { SubtitleUtil as SubtitleUtilClass } from '../../utils/SubtitleUtil';
 import IsoFileUtil from '../../utils/IsoFileUtil';
 import { BaseListener } from '../../utils/BaseEventUtil';
 import PermissionUtil from '../../utils/PermissionUtil';
 import Preferences from '../../database/Preferences';
+import { XAnimation } from '../../utils/AnimationUtil';
 
 const TAG = 'MpvController'
 
@@ -652,8 +664,13 @@ export class MpvController implements PlayerControllerInterface {
     if (await SubtitleUtil.isSubtitleExist(PathUtils.subtitlePath!, nowPlaying.date!)) {
       try {
         let subtitle = fs.openSync(PathUtils.subtitlePath! + nowPlaying.date, fs.OpenMode.READ_ONLY)
-        await SubtitleUtil.parseSubtitleProcess(subtitle.path, nowPlaying.external_subtitle_format) ?
-          this.subtitleSelected = SubtitleMode.EXTERNAL_SUBTITLE : this.subtitleSelected = SubtitleMode.INNER_SUBTITLE
+        const success = await SubtitleUtil.parseSubtitleProcess(subtitle.path, nowPlaying.external_subtitle_format)
+        if (success) {
+          this.subtitleSelected = SubtitleMode.EXTERNAL_SUBTITLE
+          this.subtitle = SubtitleUtil.getSubtitlesAtTime(this.playTime)
+        } else {
+          this.subtitleSelected = SubtitleMode.INNER_SUBTITLE
+        }
       } catch (error) {
         this.subtitleSelected = SubtitleMode.INNER_SUBTITLE
       }
@@ -893,5 +910,335 @@ export class MpvController implements PlayerControllerInterface {
     }
 
     this.switchDecodingMode('buffer_hw', errorMessage)
+  }
+
+  // ===== Pinch gesture =====
+  onPinchStart(fingerDistance: number): void {
+    VideoOperateUtil.initPinchDistance = fingerDistance
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onPinchUpdate(fingerDistance: number): void {
+    const rawScale = fingerDistance / VideoOperateUtil.initPinchDistance
+    const adjustedScale = 1 + (rawScale - 1) * PINCH_SCALE_SENSITIVITY
+    const clampedScale = Math.min(Math.max(adjustedScale, MIN_SCALE_FACTOR), MAX_SCALE_FACTOR)
+    const scaledWidth = this.playAreaWidth * clampedScale
+    const maxAllowed = VideoInfoUtil.playAreaWidth * MAX_WIDTH_MULTIPLIER
+    const minAllowed = VideoInfoUtil.playAreaWidth * MIN_WIDTH_MULTIPLIER
+    if (scaledWidth > maxAllowed || scaledWidth < minAllowed) {
+      return
+    }
+    this.playAreaWidth = scaledWidth
+    this.playAreaHeight = this.playAreaHeight * clampedScale
+    this.isZoomed = clampedScale !== 1
+    XAnimation.runWithAnimation(() => {
+      this.playAreaWidth = this.playAreaWidth
+      this.playAreaHeight = this.playAreaHeight
+    })
+  }
+
+  onPinchEnd(): void {
+    this.isZoomed = this.playAreaWidth !== VideoInfoUtil.playAreaWidth
+  }
+
+  // ===== Horizontal pan (seek) =====
+  onHorizonPanStart(): void {
+    VideoOperateUtil.lastPlayTime = this.playTime
+    this.onSwiping = true
+  }
+
+  onHorizonPanUpdate(offsetX: number): void {
+    const timePerPixel = VideoOperateUtil.getTimePixel(this.screenWidth, this.nowPlaying?.time!)
+    this.playTime = Math.max(0,
+      Math.min(VideoOperateUtil.lastPlayTime + (offsetX * timePerPixel), this.nowPlaying?.time!))
+  }
+
+  onHorizonPanEnd(): void {
+    this.seekTime(this.playTime)
+    this.onSwiping = false
+  }
+
+  // ===== Vertical pan (brightness/volume) =====
+  onVerticalPanStart(tapX: number): void {
+    VideoOperateUtil.leftSideSwipe = tapX < this.screenWidth / SCREEN_HALF_DIVIDER
+    VideoOperateUtil.screenBrightnessTmp = this.screenBrightness
+    this.volume = this.volumeActually
+    VideoOperateUtil.lastVolume = this.volume
+  }
+
+  onVerticalPanUpdate(offsetY: number): void {
+    const deltaYScale = offsetY / this.screenHeight * VERTICAL_PAN_SENSITIVITY
+    if (VideoOperateUtil.leftSideSwipe) {
+      this.onSwipingBrightness = true
+      this.screenBrightness = VideoOperateUtil.calNewBrightness(deltaYScale)
+      VideoOperateUtil.setBrightness(this.screenBrightness)
+    } else {
+      this.onSwipingVoice = true
+      const newVolume = VideoOperateUtil.lastVolume - deltaYScale * VOLUME_PAN_MULTIPLIER
+      this.volume = Math.min(Math.max(newVolume, VideoOperateUtil.minVolume), VideoOperateUtil.maxVolume)
+    }
+  }
+
+  onVerticalPanEnd(): void {
+    this.onSwiping = false
+    this.onSwipingVoice = false
+    this.onSwipingBrightness = false
+  }
+
+  // ===== Long press (speed up) =====
+  onLongPressAction(): void {
+    if (this.playing) {
+      VideoOperateUtil.lastSpeed = this.speed
+      this.updatePlaybackSpeed(Setting.longPressSpeed)
+      this.longPress = true
+    }
+  }
+
+  onLongPressEnd(): void {
+    this.longPress = false
+    this.speed = VideoOperateUtil.lastSpeed
+    this.updatePlaybackSpeed(this.speed)
+  }
+
+  onLongPressPanStart(tapX: number): void {
+    VideoOperateUtil.longPressStartX = tapX
+  }
+
+  onLongPressPanUpdate(tapX: number): void {
+    if (!this.longPress) {
+      return
+    }
+    const deltaX = tapX - VideoOperateUtil.longPressStartX
+    if (Math.abs(deltaX) <= SWIPE_THRESHOLD) {
+      return
+    }
+    const direction = Math.sign(deltaX)
+    const currentSpeedIndex = VideoInfoUtil.videoSpeedListAll.indexOf(this.speed)
+    const newIndex = currentSpeedIndex + direction
+    const clampedIndex = Math.max(0, Math.min(newIndex, VideoInfoUtil.videoSpeedListAll.length - 1))
+    if (clampedIndex === currentSpeedIndex) {
+      return
+    }
+    this.updatePlaybackSpeed(VideoInfoUtil.videoSpeedListAll[clampedIndex])
+    VideoOperateUtil.longPressStartX = tapX
+  }
+
+  // ===== Pan move (when zoomed) =====
+  onPanMoveStart(event: GestureEvent): void {
+    VideoOperateUtil.panStartX = event.fingerList[0]?.localX || 0
+    VideoOperateUtil.panStartY = event.fingerList[0]?.localY || 0
+  }
+
+  onPanMoveUpdate(event: GestureEvent): void {
+    const currentX = event.fingerList[0]?.localX || 0
+    const currentY = event.fingerList[0]?.localY || 0
+    const deltaX = currentX - VideoOperateUtil.panStartX
+    const deltaY = currentY - VideoOperateUtil.panStartY
+    this.translateX += deltaX
+    this.translateY += deltaY
+    VideoOperateUtil.panStartX = currentX
+    VideoOperateUtil.panStartY = currentY
+  }
+
+  // ===== Screen proportion adjustments =====
+  onSpecificVideoProportions(playAreaSize: number[]): void {
+    this.playAreaWidth = playAreaSize[0]
+    this.playAreaHeight = playAreaSize[1]
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onOriginalRatio(): void {
+    this.setKeepAspectStatus(true)
+    this.playAreaHeight = VideoInfoUtil.playAreaHeight
+    this.playAreaWidth = VideoInfoUtil.playAreaWidth
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onStretchedToFullScreen(): void {
+    this.setKeepAspectStatus(false)
+    this.playAreaHeight = this.screenHeight
+    this.playAreaWidth = this.screenWidth
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onFullScreenByWidth(): void {
+    this.playAreaWidth = this.screenWidth
+    this.playAreaHeight = (VideoInfoUtil.playAreaHeight / VideoInfoUtil.playAreaWidth) * this.screenWidth
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onFullScreenByHeight(): void {
+    this.playAreaHeight = this.screenHeight
+    this.playAreaWidth = (VideoInfoUtil.playAreaWidth / VideoInfoUtil.playAreaHeight) * this.screenHeight
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onUniformScale(scale: number): void {
+    this.playAreaHeight = scale * VideoInfoUtil.playAreaHeight
+    this.playAreaWidth = scale * VideoInfoUtil.playAreaWidth
+    this.isZoomed = false
+    this.translateX = 0
+    this.translateY = 0
+  }
+
+  onVolumeKeyEvent(event: KeyEvent): void {
+    this.volume = this.volumeActually
+    const newVolume = VideoOperateUtil.changeVolume(this.volume,
+      event.keyCode === KeyCode.KEYCODE_DPAD_UP ? VOLUME_STEP : -VOLUME_STEP)
+    this.volume = newVolume
+    this.volumeActually = newVolume
+    VideoOperateUtil.lastVolume = newVolume
+  }
+
+  handleAreaChange(newValue: Area): void {
+    this.screenWidth = Math.floor(new Number(newValue.width).valueOf())
+    this.screenHeight = Math.floor(new Number(newValue.height).valueOf())
+    this.setRotation()
+  }
+
+  async onAppear(): Promise<void> {
+    this.prepare()
+    PermissionUtil.applyContinuousTask()
+    try {
+      await (await this.windowClass)?.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
+      WindowUtil.setKeepScreenStatus(PathUtils.appContext!, true)
+      WindowUtil.setBarState(PathUtils.appContext!, false, false)
+    } catch (error) {
+      salmonLogger.addLog(TAG, 'setPreferredOrientation error:' + error, true)
+    }
+    this.repeatMode = Preferences.getRepeatModeState(PathUtils.appContext!)
+    const videoSpeed = Preferences.getVideoSpeed(PathUtils.appContext!)
+    this.speed = parseFloat(videoSpeed?.replace('x', '') || '1')
+    WindowUtil.enableLandscapeMultiWindow(this.windowClass)
+    this.initVolumeAndBrightness()
+  }
+
+  onDisappear(): void {
+    VideoOperateUtil.setBrightness(-1)
+    WindowUtil.recoveryBarColor()
+    AppStorage.delete('nowPlayingData')
+    Preferences.saveVideoSpeed(PathUtils.appContext!, this.speed + 'x')
+    Preferences.saveRepeatModeState(PathUtils.appContext!, this.repeatMode)
+    try {
+      this.audioVolumeManager?.off('streamVolumeChange')
+      this.audioVolumeManager = null
+    } catch (error) {
+      salmonLogger.addLog(TAG, `音量监听取消错误 ${error}`, true)
+    }
+  }
+
+  async onWillDisappear(): Promise<void> {
+    if (this.videoMetaDataList.length > 0 && this.playTime > 0) {
+      VideoOperateUtil.saveVideoTime(this.playTime, this.nowPlaying!, this.videoMetaDataList,
+        PathUtils.appContext!)
+    }
+    PermissionUtil.applyStopContinuousTask()
+    WindowUtil.setKeepScreenStatus(PathUtils.appContext!, false)
+    WindowUtil.setBarState(PathUtils.appContext!, true, true)
+    PiPWindowUtil.destroyPipController()
+    try {
+      await (await this.windowClass)?.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
+      await this.avSession?.stopCasting()
+    } catch (error) {
+      salmonLogger.addLog(TAG, `onWillDisappear error: ${error}`, true)
+    }
+  }
+
+  refreshExternalSubtitlePreview(offset: number): void {
+    if (this.subtitleSelected !== SubtitleMode.EXTERNAL_SUBTITLE) {
+      return
+    }
+    this.subtitle = SubtitleUtil.getSubtitlesAtTime(this.playTime, offset)
+  }
+
+  refreshExternalSubtitleByPlaybackTime(isAdjustingSubtitleOffset: boolean, subtitleVisibility: Visibility): void {
+    if (isAdjustingSubtitleOffset) {
+      return
+    }
+    if (this.subtitleSelected !== SubtitleMode.EXTERNAL_SUBTITLE) {
+      return
+    }
+    if (subtitleVisibility !== Visibility.Visible) {
+      return
+    }
+    this.subtitle = SubtitleUtil.getSubtitlesAtTime(this.playTime)
+  }
+
+  getAdjacentSubtitleOffset(direction: 'prev' | 'next', currentOffset: number): number | undefined {
+    const targetOffset = SubtitleUtil.getAdjacentSubtitleOffset(this.playTime, currentOffset, direction)
+    if (targetOffset === undefined) {
+      ToolsUtil.showToast(direction === 'prev' ? '没有上一条字幕' : '没有下一条字幕')
+      return undefined
+    }
+    if (Math.abs(targetOffset) > 50000) {
+      ToolsUtil.showToast('目标字幕超出偏移范围：-50000 到 50000')
+      return undefined
+    }
+    return Math.round(targetOffset)
+  }
+
+  hasInnerSubtitleTrack(): boolean {
+    return this.subtitleTrack.length > 0
+  }
+
+  hasExternalSubtitle(): boolean {
+    return (this.nowPlaying?.external_subtitle_format?.length ?? 0) > 0
+  }
+
+  saveSubtitlePreferenceForCurrentVideo(
+    subtitleVisibility: Visibility,
+    isAIAsrShown: boolean,
+    subtitle3DMode: Subtitle3DMode
+  ): void {
+    const nowPlaying = this.nowPlaying
+    const appContext = PathUtils.appContext
+    if (!nowPlaying || !appContext) {
+      return
+    }
+
+    const subtitleMode = SubtitleUtilClass.normalizeSubtitleMode(this.subtitleSelected)
+    const subtitleVisible = subtitleVisibility === Visibility.Visible
+    const subtitleAIAsrShown = isAIAsrShown
+    const subtitle3DModeValue = SubtitleUtilClass.normalizeSubtitle3DMode(subtitle3DMode)
+    const subtitleOffsetMillis = Math.max(-50000, Math.min(50000, Math.round(SubtitleUtil.offsetMillis)))
+    const subtitleTrackId = this.subtitleTrackSelected
+    const hasPreferenceChanged =
+      nowPlaying.subtitle_mode !== subtitleMode ||
+        nowPlaying.subtitle_visible !== subtitleVisible ||
+        nowPlaying.subtitle_ai_asr_shown !== subtitleAIAsrShown ||
+        nowPlaying.subtitle_3d_mode !== subtitle3DModeValue ||
+        nowPlaying.subtitle_offset_millis !== subtitleOffsetMillis ||
+        nowPlaying.subtitle_track_id !== subtitleTrackId
+
+    if (!hasPreferenceChanged) {
+      return
+    }
+
+    nowPlaying.subtitle_mode = subtitleMode
+    nowPlaying.subtitle_visible = subtitleVisible
+    nowPlaying.subtitle_ai_asr_shown = subtitleAIAsrShown
+    nowPlaying.subtitle_3d_mode = subtitle3DModeValue
+    nowPlaying.subtitle_offset_millis = subtitleOffsetMillis
+    nowPlaying.subtitle_track_id = subtitleTrackId
+
+    SelectFileUtil.saveData(appContext, nowPlaying, {
+      subtitleMode,
+      subtitleVisible,
+      subtitleAIAsrShown,
+      subtitle3DMode: subtitle3DModeValue,
+      subtitleOffsetMillis,
+      subtitleTrackId
+    })
   }
 }
