@@ -74,6 +74,8 @@ export struct VideoView {
       }
     }), cornerRadius: 20, shadow: DefaultDialogShadow
   })
+  @Local currentSortField: 'name' | 'datetime' | 'time' | '' = ''
+  @Local currentSortAsc: boolean = true
 
   @Monitor('file_folder_list')
   onFolderListChanged() {
@@ -88,6 +90,7 @@ export struct VideoView {
   SyncDelMultipleList() {
     DataSyncUtil.delMultipleList = this.delMultipleList
   }
+
   @Event onScrollToFolderDateChange: (v: string) => void = () => {
   }
 
@@ -279,21 +282,11 @@ export struct VideoView {
   @Builder
   SortMenuBuilder() {
     SortComponent({
-      onSortByName: () => {
-        ToolsUtil.sortBy(PathUtils.appContext!, this.videoListController.videoMetaDataList,
-          this.videoListController.folder, "name")
-        VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
-      },
-      onSortByTime: () => {
-        ToolsUtil.sortBy(PathUtils.appContext!, this.videoListController.videoMetaDataList,
-          this.videoListController.folder, "time")
-        VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
-      },
-      onSortByDatetime: () => {
-        ToolsUtil.sortBy(PathUtils.appContext!, this.videoListController.videoMetaDataList,
-          this.videoListController.folder, "datetime")
-        VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
-      }
+      currentSortField: this.currentSortField,
+      currentSortAsc: this.currentSortAsc,
+      onSortByName: (): void => this.handleSort('name', true),
+      onSortByTime: (): void => this.handleSort('time', false),
+      onSortByDatetime: (): void => this.handleSort('datetime', false)
     })
   }
 
@@ -389,6 +382,18 @@ export struct VideoView {
   @Builder
   FileFolderMenuBuilder(video_item: VideoMetadata | undefined) {
     FileFolderMenu({ video_item: video_item })
+  }
+
+  private handleSort(field: 'name' | 'time' | 'datetime', defaultAsc: boolean) {
+    if (this.currentSortField === field) {
+      this.currentSortAsc = !this.currentSortAsc
+    } else {
+      this.currentSortField = field
+      this.currentSortAsc = defaultAsc
+    }
+    ToolsUtil.sortBy(PathUtils.appContext!, this.videoListController.videoMetaDataList,
+      this.videoListController.folder, field, this.currentSortAsc)
+    VideoUtils.refresh(this.videoListController, this.fileFolderSource, this.videoListController.folder)
   }
 
   /**

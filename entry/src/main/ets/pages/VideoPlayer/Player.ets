@@ -18,7 +18,6 @@ import { SweetRepeatMode } from '../../common/enum/SweetRepeatMode'
 import NavigationAddress, { PlayerParams } from '../../common/NavigationCommon'
 import { WindowUtil } from '../../utils/WindowUtil'
 import { XAnimation } from '../../utils/AnimationUtil'
-import SubtitleUtil from '../../utils/SubtitleUtil'
 import { Subtitle3DMode, SubtitleMode } from '../../common/enum/SubtitleMode'
 import { AVPlayerController } from '../../controller/AVPlayerController'
 import { BrightnessSwipingBuilder } from '../../component/PlayerComponent/BrightnessSwipingBuilder'
@@ -44,6 +43,7 @@ import PrivacySpaceUtil from '../../utils/PrivacySpaceUtil'
 import { DefaultDialogShadow } from '../../common/AttributeModifierConfig'
 import { NumberInputDialog } from '../../component/Dialog/NumberInputDialog'
 import { SubtitleOffsetDialog } from '../../component/Dialog/SubtitleOffsetDialog'
+import SubtitleUtil from '../../utils/SubtitleUtil'
 
 @ComponentV2
 export struct Player { // 播放页

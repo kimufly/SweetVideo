@@ -1,17 +1,17 @@
-import NavigationAddress from '../../common/NavigationCommon'
-import Preferences from '../../database/Preferences'
+import { SettingsClickItem } from '../../component/SettingComponent/SettingsClickItem'
+import { SettingsToggleItem } from '../../component/SettingComponent/SettingsToggleItem'
 import { Setting } from '../../utils/ObservedUtil'
+import Preferences from '../../database/Preferences'
 import { PathUtils } from '../../utils/PathUtils'
-import { SettingsClickItem } from '../SettingComponent/SettingsClickItem'
-import { SettingsToggleItem } from '../SettingComponent/SettingsToggleItem'
+import NavigationAddress from '../../common/NavigationCommon'
 
 @ComponentV2
 export struct PrivacySpaceSettingComponent {
   @Param isPresent: boolean = false
-  @Event onIsPresentChange: (v: boolean) => void = () => {}
   @Param passwd: string = ''
-  @Event onPasswdChange: (v: string) => void = () => {}
   @Consumer('pathStack') pathStack: NavPathStack = new NavPathStack()
+  @Event onIsPresentChange: (v: boolean) => void = () => {
+  }
   @Event onEditPasswdDialogOpen: () => void = () => {
   }
 
@@ -22,7 +22,6 @@ export struct PrivacySpaceSettingComponent {
         message: '重设密码',
         onPress: () => {
           this.onIsPresentChange(false)
-          this.onPasswdChange(Preferences.getPassword(PathUtils.appContext!))
           this.onEditPasswdDialogOpen()
         }
       })

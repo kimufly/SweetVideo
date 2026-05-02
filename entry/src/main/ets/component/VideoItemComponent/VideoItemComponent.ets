@@ -340,7 +340,6 @@ export struct VideoList {
           )
         }, (item: VideoMetadata) => item.date)
       }
-      .fadingEdge(true)
       .clip(false)
       .padding({ left: 10, right: 10 })
       .cachedCount(12)
