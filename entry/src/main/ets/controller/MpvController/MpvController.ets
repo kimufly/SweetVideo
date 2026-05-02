@@ -273,6 +273,13 @@ export class MpvController implements PlayerControllerInterface {
     this.setPlayerCallback(pathStack!)
     this.getData()
 
+    // 立即触发 OSD XComponent 创建，不要等到 setTimeout
+    // 字幕渲染链条：osdVisibility=true → UI 创建 XComponent → onLoad → syncOsdSurfaceSize → 字幕显示
+    // 必须在 toast 显示前启动这条链，否则 toast 期间字幕空白
+    if (Setting.mpvDecodingMethod === MpvDecodingMethod.HARDWARE_SURFACE && !this.osdVisibility) {
+      this.osdVisibility = true
+    }
+
     // OSD 显示逻辑：
     // 1. 首次播放：延迟显示 OSD，等待视频尺寸变化事件触发 syncOsdSurfaceSize()
     // 2. 切换视频：OSD 保持可见，视频尺寸变化事件会自动同步 OSD 尺寸
