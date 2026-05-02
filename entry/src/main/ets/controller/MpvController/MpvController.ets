@@ -74,7 +74,6 @@ import IsoFileUtil from '../../utils/IsoFileUtil';
 import { BaseListener } from '../../utils/BaseEventUtil';
 import PermissionUtil from '../../utils/PermissionUtil';
 import Preferences from '../../database/Preferences';
-import { XAnimation } from '../../utils/AnimationUtil';
 
 const TAG = 'MpvController'
 
@@ -1019,10 +1018,6 @@ export class MpvController implements PlayerControllerInterface {
     this.playAreaWidth = scaledWidth
     this.playAreaHeight = this.playAreaHeight * clampedScale
     this.isZoomed = clampedScale !== 1
-    XAnimation.runWithAnimation(() => {
-      this.playAreaWidth = this.playAreaWidth
-      this.playAreaHeight = this.playAreaHeight
-    })
   }
 
   onPinchEnd(): void {
