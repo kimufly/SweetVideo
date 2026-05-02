@@ -119,6 +119,8 @@ export struct MpvXComponent {
         id: this.xComponentId,
         libraryname: this.libraryName,
       })
+        .width('100%')
+        .height('100%')
         .focusable(true)
         .defaultFocus(true)
         .enableAnalyzer(true)
@@ -136,6 +138,8 @@ export struct MpvXComponent {
           type: XComponentType.SURFACE,
           controller: this.osdXController
         })
+          .width('100%')
+          .height('100%')
           .backgroundColor(Color.Transparent)  // 声明透明背景，确保合成器使用 SRC_OVER 而非 SRC
           .hitTestBehavior(HitTestMode.Transparent)
           .onLoad(() => {
@@ -152,6 +156,8 @@ export struct MpvXComponent {
           })
       }
     }
+    .width('100%')
+    .height('100%')
   }
 }
 

@@ -138,7 +138,7 @@ export struct MpvPlayer {
             },
             onOsdSurfaceLoad: (surfaceId: string) => {
               this.mpv.osdSurfaceId = surfaceId
-              this.mpv.setOsdSurface(surfaceId, this.mpv.playAreaWidth, this.mpv.playAreaHeight)
+              this.mpv.syncOsdSurfaceSize()
             },
           })
 

@@ -280,6 +280,14 @@ export class MpvController implements PlayerControllerInterface {
 
     // 智能旋转和外部字幕可以延迟执行，不影响播放
     setTimeout(async () => {
+      // OSD 尽早显示，避免在 toast/seek 期间字幕空白
+      // 先尝试用正确分辨率同步，如果视频尺寸还没就绪就 fallback 强制显示
+      if (Setting.mpvDecodingMethod === MpvDecodingMethod.HARDWARE_SURFACE && !this.osdVisibility) {
+        this.syncOsdSurfaceSize()
+        if (!this.osdVisibility) {
+          this.osdVisibility = true
+        }
+      }
       if (Setting.smartRotation &&
         (this.playAreaWidth > this.playAreaHeight || this.nowPlaying!.size[0] > this.nowPlaying!.size[1]) &&
         this.screenHeight > this.screenWidth) {
@@ -304,10 +312,6 @@ export class MpvController implements PlayerControllerInterface {
       this.setRotation()
       this.onSwiping = false
       this.isSliderPlayTimeChange = false
-      // 首次播放时显示 OSD（切换视频时 OSD 保持可见）
-      if (Setting.mpvDecodingMethod === MpvDecodingMethod.HARDWARE_SURFACE && !this.osdVisibility) {
-        this.osdVisibility = true
-      }
       await this.setExternalSubtitle(this.nowPlaying!)
     }, 1200)
   }
@@ -324,12 +328,15 @@ export class MpvController implements PlayerControllerInterface {
     if (!this.osdSurfaceId) {
       return
     }
-    // 使用视频原生分辨率，而不是 playAreaWidth/Height（显示区域尺寸）
     const videoWidth = this.getPlayAreaWidth()
     const videoHeight = this.getPlayAreaHeight()
 
     if (videoWidth > 0 && videoHeight > 0) {
       this.setOsdSurface(this.osdSurfaceId, videoWidth, videoHeight)
+      // 尺寸就绪后才显示 OSD，避免在低分辨率 buffer 上渲染导致模糊
+      if (!this.osdVisibility && Setting.mpvDecodingMethod === MpvDecodingMethod.HARDWARE_SURFACE) {
+        this.osdVisibility = true
+      }
     }
   }
 
@@ -1036,6 +1043,7 @@ export class MpvController implements PlayerControllerInterface {
     this.isZoomed = newWidth > originalWidth || newHeight > originalHeight
 
     this.lastPinchDistance = fingerDistance
+    this.syncOsdSurfaceSize()
   }
 
   onPinchEnd(): void {
@@ -1050,6 +1058,7 @@ export class MpvController implements PlayerControllerInterface {
       this.translateY = 0
       this.isZoomed = false
     }
+    this.syncOsdSurfaceSize()
   }
 
   // ===== Horizontal pan (seek) =====
@@ -1171,6 +1180,7 @@ export class MpvController implements PlayerControllerInterface {
     this.isZoomed = false
     this.translateX = 0
     this.translateY = 0
+    this.syncOsdSurfaceSize()
   }
 
   onOriginalRatio(): void {
@@ -1180,6 +1190,7 @@ export class MpvController implements PlayerControllerInterface {
     this.isZoomed = false
     this.translateX = 0
     this.translateY = 0
+    this.syncOsdSurfaceSize()
   }
 
   onStretchedToFullScreen(): void {
@@ -1189,6 +1200,7 @@ export class MpvController implements PlayerControllerInterface {
     this.isZoomed = false
     this.translateX = 0
     this.translateY = 0
+    this.syncOsdSurfaceSize()
   }
 
   onFullScreenByWidth(): void {
@@ -1197,6 +1209,7 @@ export class MpvController implements PlayerControllerInterface {
     this.isZoomed = false
     this.translateX = 0
     this.translateY = 0
+    this.syncOsdSurfaceSize()
   }
 
   onFullScreenByHeight(): void {
@@ -1205,6 +1218,7 @@ export class MpvController implements PlayerControllerInterface {
     this.isZoomed = false
     this.translateX = 0
     this.translateY = 0
+    this.syncOsdSurfaceSize()
   }
 
   onUniformScale(scale: number): void {
@@ -1213,6 +1227,7 @@ export class MpvController implements PlayerControllerInterface {
     this.isZoomed = false
     this.translateX = 0
     this.translateY = 0
+    this.syncOsdSurfaceSize()
   }
 
   onVolumeKeyEvent(event: KeyEvent): void {
