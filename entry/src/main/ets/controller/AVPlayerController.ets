@@ -44,7 +44,6 @@ import SubtitleUtil from '../utils/SubtitleUtil'
 import VideoInfoUtil from '../utils/VideoInfoUtil'
 import VideoOperateUtil from '../utils/VideoOperateUtil'
 import { WindowUtil } from '../utils/WindowUtil'
-import { XAnimation } from '../utils/AnimationUtil'
 import fileIo from '@ohos.file.fs'
 
 const TAG = 'AVPlayerController'
@@ -89,6 +88,7 @@ export class AVPlayerController implements PlayerControllerInterface {
   @Trace isLock: boolean = false
   @Trace abCircleStatus: boolean = false
   @Trace isZoomed: boolean = false
+  @Trace isPinching: boolean = false
   @Trace translateX: number = 0
   @Trace translateY: number = 0
   @Trace showControl: boolean = false
@@ -740,33 +740,56 @@ export class AVPlayerController implements PlayerControllerInterface {
   }
 
   // ===== Pinch gesture =====
+  private lastPinchDistance: number = 0
+
   onPinchStart(fingerDistance: number): void {
-    VideoOperateUtil.initPinchDistance = fingerDistance
-    this.translateX = 0
-    this.translateY = 0
+    this.lastPinchDistance = fingerDistance
+    this.isPinching = true
+    if (!this.isZoomed) {
+      this.translateX = 0
+      this.translateY = 0
+    }
   }
 
   onPinchUpdate(fingerDistance: number): void {
-    const rawScale = fingerDistance / VideoOperateUtil.initPinchDistance
-    const adjustedScale = 1 + (rawScale - 1) * PINCH_SCALE_SENSITIVITY
-    const clampedScale = Math.min(Math.max(adjustedScale, MIN_SCALE_FACTOR), MAX_SCALE_FACTOR)
-    const scaledWidth = this.playAreaWidth * clampedScale
-    const maxAllowed = VideoInfoUtil.playAreaWidth * MAX_WIDTH_MULTIPLIER
-    const minAllowed = VideoInfoUtil.playAreaWidth * MIN_WIDTH_MULTIPLIER
-    if (scaledWidth > maxAllowed || scaledWidth < minAllowed) {
-      return
-    }
-    this.playAreaWidth = scaledWidth
-    this.playAreaHeight = this.playAreaHeight * clampedScale
-    this.isZoomed = clampedScale !== 1
-    XAnimation.runWithAnimation(() => {
-      this.playAreaWidth = this.playAreaWidth
-      this.playAreaHeight = this.playAreaHeight
-    })
+    const deltaScale = fingerDistance / this.lastPinchDistance
+    const adjustedDelta = 1 + (deltaScale - 1) * PINCH_SCALE_SENSITIVITY
+    const clampedDelta = Math.min(Math.max(adjustedDelta, MIN_SCALE_FACTOR), MAX_SCALE_FACTOR)
+
+    let newWidth = this.playAreaWidth * clampedDelta
+    let newHeight = this.playAreaHeight * clampedDelta
+
+    const originalWidth = VideoInfoUtil.playAreaWidth
+    const originalHeight = VideoInfoUtil.playAreaHeight
+    const maxWidth = originalWidth * MAX_WIDTH_MULTIPLIER
+    const minWidth = originalWidth * MIN_WIDTH_MULTIPLIER
+
+    newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth))
+    newHeight = Math.max(minWidth * originalHeight / originalWidth, Math.min(maxWidth * originalHeight / originalWidth, newHeight))
+
+    const scaleRatio = newWidth / this.playAreaWidth
+    this.translateX *= scaleRatio
+    this.translateY *= scaleRatio
+
+    this.playAreaWidth = newWidth
+    this.playAreaHeight = newHeight
+    this.isZoomed = newWidth > originalWidth || newHeight > originalHeight
+
+    this.lastPinchDistance = fingerDistance
   }
 
   onPinchEnd(): void {
-    this.isZoomed = this.playAreaWidth !== VideoInfoUtil.playAreaWidth
+    this.isPinching = false
+    const originalWidth = VideoInfoUtil.playAreaWidth
+    const originalHeight = VideoInfoUtil.playAreaHeight
+
+    if (this.playAreaWidth <= originalWidth && this.playAreaHeight <= originalHeight) {
+      this.playAreaWidth = originalWidth
+      this.playAreaHeight = originalHeight
+      this.translateX = 0
+      this.translateY = 0
+      this.isZoomed = false
+    }
   }
 
   // ===== Horizontal pan (seek) =====
@@ -866,8 +889,21 @@ export class AVPlayerController implements PlayerControllerInterface {
     const deltaY = currentY - VideoOperateUtil.panStartY
     this.translateX += deltaX
     this.translateY += deltaY
+    this.constrainTranslation()
     VideoOperateUtil.panStartX = currentX
     VideoOperateUtil.panStartY = currentY
+  }
+
+  private constrainTranslation(): void {
+    if (!this.isZoomed) {
+      this.translateX = 0
+      this.translateY = 0
+      return
+    }
+    const maxOffsetX = Math.max(0, (this.playAreaWidth - this.screenWidth) / 2)
+    const maxOffsetY = Math.max(0, (this.playAreaHeight - this.screenHeight) / 2)
+    this.translateX = Math.max(-maxOffsetX, Math.min(maxOffsetX, this.translateX))
+    this.translateY = Math.max(-maxOffsetY, Math.min(maxOffsetY, this.translateY))
   }
 
   // ===== Screen proportion adjustments =====

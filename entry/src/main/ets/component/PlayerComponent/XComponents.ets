@@ -90,7 +90,7 @@ export struct XComponents {
     })
     .width(this.player.playAreaWidth)
     .height(this.player.playAreaHeight)
-    .animation({ duration: this.player.playTime > 300 ? 300 : 0, curve: Curve.Ease })
+    .animation({ duration: (this.player.isPinching || this.player.playTime <= 300) ? 0 : 300, curve: Curve.Ease })
     .rotate({ y: 2, angle: this.player.angle, perspective: 200 })
     .translate({ x: this.player.translateX, y: this.player.translateY })
   }
