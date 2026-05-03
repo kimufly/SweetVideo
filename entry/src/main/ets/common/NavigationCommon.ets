@@ -12,6 +12,7 @@ export default class NavigationAddress {
   static PLAYER_SETTING_PAGE = 'PlayerSettingPage'
   static PRIVACY_ERROR_LIST = 'PrivacySpaceErrorList'
   static MORE_SETTING_PAGE = 'MoreSettingPage'
+  static LAB_PAGE = 'LabPage'
   static MPV_PLAYER = 'MPVPlayer'
 }
 

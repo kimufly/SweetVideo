@@ -5,6 +5,7 @@ import FileFolderUtil from '../utils/FileFolderUtil'
 import { EditFileFolderNameDialog } from '../component/Dialog/EditFileFolderNameDialog'
 import { FileFolder } from '../interfaces/FileFolderInterface'
 import { ButtonFancyModifier, DefaultDialogShadow, SymbolGlyphFancyModifier } from '../common/AttributeModifierConfig'
+import PermissionUtil from '../utils/PermissionUtil'
 import { PathUtils } from '../utils/PathUtils'
 import { VideoListController } from '../component/VideoItemComponent/VideoItemComponent'
 import { AppInfoBuilder, SideBarController } from '../component/SideBarComponent/SideBar'
@@ -36,6 +37,7 @@ import { PrivacySpaceErrorList } from './PrivacySpace/PrivacySpaceErrorList'
 import { RecentPlay } from './RecentPlay'
 import { AboutApp } from './SettingPage/AboutApp'
 import { CrashPage } from './SettingPage/CrashPage'
+import { LabPage } from './SettingPage/LabPage'
 import { MoreSettingPage } from './SettingPage/MoreSettingPage'
 import { PersonalizePage } from './SettingPage/PersonalizePage'
 import { PlayerSettingPage } from './SettingPage/PlayerSettingPage'
@@ -212,6 +214,12 @@ struct Index {
 
     // checkUriProcess 需要全量数据（含 video_list）来校验文件是否存在
     const allFolders = await FileFolderUtil.getAllFolderAsync(PathUtils.appContext!)
+
+    // 预激活权限：在主线程中提前激活所有视频的访问权限，
+    // 避免 taskpool 子线程中 fileShare.activatePermission 无法生效导致误判失效
+    const allVideos = allFolders.flatMap(f => f.video_list || [])
+    await Promise.all(allVideos.map(v => PermissionUtil.activatePermission(v.uri)))
+
     checkUriProcess(allFolders, (re: Object) => {
       const result = re as Array<VideoMetadata>
       if (result.length > 0) {
@@ -618,6 +626,8 @@ struct Index {
       PrivacySpaceErrorList()
     } else if (name == NavigationAddress.MORE_SETTING_PAGE) {
       MoreSettingPage()
+    } else if (name == NavigationAddress.LAB_PAGE) {
+      LabPage()
     } else if (name == NavigationAddress.MPV_PLAYER) {
       MpvPlayer()
     }

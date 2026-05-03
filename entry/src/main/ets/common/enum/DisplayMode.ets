@@ -8,3 +8,8 @@ export const enum CoverLayoutMode {
   VERTICAL_PLATE = 0,
   HORIZONTAL_PLATE = 1
 }
+
+export const enum NavBarStyle {
+  CLASSIC = 0,
+  FLOATING = 1
+}

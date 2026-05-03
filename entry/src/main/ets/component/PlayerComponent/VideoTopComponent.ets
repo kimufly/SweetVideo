@@ -133,7 +133,7 @@ export struct VideoTopComponent {
       })
 
       // 7. 播放器类型标识
-      Text(this.player instanceof MpvController ? 'MPV播放器' : '系统播放器')
+      Text(this.player.playerType === 'mpv' ? 'MPV播放器' : '系统播放器')
         .fontSize(14)
         .fontColor($r('sys.color.white'))
         .opacity(0.6)

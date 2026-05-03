@@ -89,6 +89,16 @@ export struct MoreSettingPage {
           })
         }
 
+        ListItem() {
+          SettingsClickItem({
+            symbol: $r('sys.symbol.bolt'),
+            message: '实验室',
+            onPress: () => {
+              this.pathStack.pushPathByName(NavigationAddress.LAB_PAGE, true)
+            }
+          })
+        }
+
         if (canIUse('SystemCapability.AppGalleryService.Distribution.Comment')) {
           ListItem() {
             SettingsClickItem({

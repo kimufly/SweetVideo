@@ -4,7 +4,7 @@ import PreferencesUtil from './PreferencesUtil'
 import { Context } from '@kit.AbilityKit'
 import { SweetRepeatMode } from '../common/enum/SweetRepeatMode'
 import { BackgroundColorMode } from '../common/enum/BackgroundColorMode'
-import { CoverLayoutMode, ListDisplayMode } from '../common/enum/DisplayMode'
+import { CoverLayoutMode, ListDisplayMode, NavBarStyle } from '../common/enum/DisplayMode'
 import { MpvDecodingMethod } from '../controller/MpvController/MpvTypes'
 
 const DATA_BASE_NAME = 'sweet_video'
@@ -302,5 +302,13 @@ export default class Preferences {
   static saveVideoSortOrder(context: Context, order: 'asc' | 'desc', isPrivacy: boolean = false): void {
     const key = isPrivacy ? Preferences.VIDEO_SORT_PRIVACY_ORDER_KEY : Preferences.VIDEO_SORT_NORMAL_ORDER_KEY
     PreferencesUtil.putPreferencesValue(context, DATA_BASE_NAME, key, order)
+  }
+
+  static getNavBarStyle(context: Context) {
+    return PreferencesUtil.getPreferencesValue(context, DATA_BASE_NAME, 'navBarStyle', NavBarStyle.CLASSIC) as NavBarStyle
+  }
+
+  static saveNavBarStyle(context: Context, navBarStyle: NavBarStyle) {
+    PreferencesUtil.putPreferencesValue(context, DATA_BASE_NAME, 'navBarStyle', navBarStyle)
   }
 }

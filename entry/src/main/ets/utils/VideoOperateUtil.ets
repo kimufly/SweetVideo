@@ -378,6 +378,7 @@ export default class VideoOperateUtil {
     Setting.autoActivePip = Preferences.getAutoActivePip(context)
     Setting.mpvDecodingMethod = Preferences.getMpvDecodingMethod(context)
     Setting.enableBackgroundDarkImage = Preferences.getEnableBackgroundDarkImage(context)
+    Setting.navBarStyle = Preferences.getNavBarStyle(context)
   }
 
   // 封装获取屏幕亮度的方法

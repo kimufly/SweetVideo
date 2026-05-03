@@ -1,5 +1,5 @@
 import { BackgroundColorMode } from '../common/enum/BackgroundColorMode'
-import { CoverLayoutMode, ListDisplayMode } from '../common/enum/DisplayMode'
+import { CoverLayoutMode, ListDisplayMode, NavBarStyle } from '../common/enum/DisplayMode'
 import { MpvDecodingMethod } from '../controller/MpvController/MpvTypes'
 import { UIUtils } from '@kit.ArkUI'
 
@@ -28,6 +28,7 @@ class SettingUtil {
   public allowGestureEntry: boolean = true
   public showFrameImgStatus: boolean = true
   public jumpToHistoryTimeStatus: boolean = true
+  public navBarStyle: NavBarStyle = NavBarStyle.CLASSIC
 }
 
 class SafeHeightUtil {

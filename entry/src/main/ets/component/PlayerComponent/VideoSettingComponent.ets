@@ -71,14 +71,14 @@ export struct VideoSettingComponent {
       }).onClick(() => {
         this.onScreenMirror()
       })
-      if (this.player instanceof AVPlayerController) {
+      if (this.player.playerType === 'avplayer') {
         MenuItem({
           symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.time_lapse')),
           content: '响度调节',
           builder: (): void => this.VolumeLoudnessGainBuilder()
         })
       }
-      if (this.player instanceof AVPlayerController) {
+      if (this.player.playerType === 'avplayer') {
         MenuItem({
           symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.headphones')),
           content: '听视频'
@@ -86,14 +86,12 @@ export struct VideoSettingComponent {
           this.toggleListenVideo()
         })
       }
-      if (this.player instanceof AVPlayerController) {
+      if (this.player.playerType === 'avplayer') {
         MenuItem({
           symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.camera_master_ai')),
-          content: this.player.superResolutionState ? '关闭视频超分辨率' : '开启视频超分辨率',
+          content: (this.player as AVPlayerController).superResolutionState ? '关闭视频超分辨率' : '开启视频超分辨率',
         }).onClick(() => {
-          if (this.player instanceof AVPlayerController) {
-            this.player.setSuperResolutionState(!this.player.superResolutionState)
-          }
+          (this.player as AVPlayerController).setSuperResolutionState(!(this.player as AVPlayerController).superResolutionState)
         })
       }
     }
@@ -228,7 +226,7 @@ export struct VideoSettingComponent {
 
   @Builder
   VolumeLoudnessGainBuilder() {
-    if (this.player instanceof AVPlayerController) {
+    if (this.player.playerType === 'avplayer') {
       Column() {
         Button({ type: ButtonType.Circle, stateEffect: true }) {
           SymbolGlyph($r('sys.symbol.undo'))
@@ -240,13 +238,11 @@ export struct VideoSettingComponent {
         .backgroundColor('#50000000')
         .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN)
         .onClick(() => {
-          if (this.player instanceof AVPlayerController) {
-            this.player.setLoudnessGain(0)
-          }
+          (this.player as AVPlayerController).setLoudnessGain(0)
         })
 
         Slider({
-          value: this.player.volumeLoudnessGain,
+          value: (this.player as AVPlayerController).volumeLoudnessGain,
           min: -90,
           max: 24,
           step: 1,
@@ -255,9 +251,7 @@ export struct VideoSettingComponent {
           reverse: true
         })
           .onChange((value) => {
-            if (this.player instanceof AVPlayerController) {
-              this.player.setLoudnessGain(value)
-            }
+            (this.player as AVPlayerController).setLoudnessGain(value)
           })
           .selectedColor($r('app.color.main_color'))
           .enableHapticFeedback(true)
