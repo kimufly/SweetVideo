@@ -249,7 +249,7 @@ export struct RecentPlay { // 最近播放页
       hideTitleArea: true,
       hideBottomBuilder: true,
       hideStatusBar: false,
-      mode: HideMode.SCROLL_UP_TO
+      mode: HideMode.SCROLL_UP
     })
   }
 }

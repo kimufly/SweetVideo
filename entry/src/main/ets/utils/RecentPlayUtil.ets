@@ -121,6 +121,6 @@ export default class RecentPlayUtil {
       pointA: 0,
       pointB: 0
     }))
-    RecentPlayUtil.updateMapIndices()
+    RecentPlayUtil.updateMapIndicesAfterAdd()
   }
 }

@@ -28,29 +28,26 @@ import { ListDisplayMode } from '../../common/enum/DisplayMode'
 import SubtitleUtil from '../../utils/SubtitleUtil'
 import { Privacy, SafeHeight, Setting } from '../../utils/ObservedUtil'
 import { SortComponent } from '../../component/VideoItemComponent/SortComponent'
-import { DELAY_JUMP_TO_PLAYER, NO_BLUR_AMOUNT, PRIVACY_BACKGROUND_BLUR_AMOUNT } from '../../common/Constants'
+import {
+  DELAY_JUMP_TO_PLAYER,
+  FULL_ALPHABET,
+  NO_BLUR_AMOUNT,
+  PRIVACY_BACKGROUND_BLUR_AMOUNT
+} from '../../common/Constants'
 import VideoOperateUtil from '../../utils/VideoOperateUtil'
 import { VideoItemPreviewBuilder } from '../../component/VideoItemComponent/VideoItemPreviewBuilder'
 import { PrivacySpaceSettingComponent } from '../../component/PrivacySpaceComponent/PrivacySpaceSettingComponent'
 import DlpAntiPeepUtil from '../../utils/DlpAntiPeepUtil'
 import { HdsNavDestination, HideMode, ScrollEffectType } from '@kit.UIDesignKit'
+import { motion } from '@kit.MultimodalAwarenessKit'
+import IntellectualGripPostureUtil from '../../utils/IntellectualGripPostureUtil'
+import { pinyin4js } from '@ohos/pinyin4js'
+import { ScrollBarBuilder } from '../../component/VideoItemComponent/ScrollBarBuilder'
 
 @ComponentV2
 export struct PrivacySpace { // 隐私空间页
   @Local videoDataSource: VideoDataSource = new VideoDataSource([])
   @Local video_meta_data_encryption: VideoMetadata[] = []
-  @Local allVideos: VideoMetadata[] = [] // 保存完整数据用于搜索
-  @Local list_line: number = 1
-  @Consumer('pathStack') pathStack: NavPathStack = new NavPathStack()
-  @Local totalItems: number = 0
-  @Local processedItems: number = 0
-  @Local loading: boolean = false
-  @Local currentFileName: string = '' // 当前处理的文件名
-  @Local importSpeed: number = 0 // 处理速度
-  @Local elapsedTime: number = 0 // 已耗时
-  @Local failedCount: number = 0 // 失败文件数
-  @Local currentStage: 'extracting' | 'cover' | 'saving' = 'extracting' // 当前处理阶段
-  @Local searchValue: string = ''
   editMetadataDialogController: CustomDialogController = new CustomDialogController({
     builder: EditMetadataDialog({
       confirm: (title: string | undefined) => {
@@ -74,9 +71,23 @@ export struct PrivacySpace { // 隐私空间页
       },
     }), cornerRadius: 20, shadow: DefaultDialogShadow
   })
+  @Local allVideos: VideoMetadata[] = [] // 保存完整数据用于搜索
+  @Local list_line: number = 1
+  @Consumer('pathStack') pathStack: NavPathStack = new NavPathStack()
+  @Local totalItems: number = 0
+  @Local processedItems: number = 0
+  @Local loading: boolean = false
+  @Local currentFileName: string = '' // 当前处理的文件名
+  @Local importSpeed: number = 0 // 处理速度
+  @Local elapsedTime: number = 0 // 已耗时
+  @Local failedCount: number = 0 // 失败文件数
+  @Local currentStage: 'extracting' | 'cover' | 'saving' = 'extracting' // 当前处理阶段
+  @Local searchValue: string = ''
   @Local is_edit: boolean = false
   @Local currentSortField: 'name' | 'datetime' | 'time' | '' = ''
   @Local currentSortAsc: boolean = true
+  @Local activeAlphabet: string[] = []
+  @Local indexerSelected: number = 0
   @Local passwd: string = 'passwd'
   editPasswdDialogController: CustomDialogController = new CustomDialogController({
     builder: EditPasswordDialog({
@@ -97,6 +108,7 @@ export struct PrivacySpace { // 隐私空间页
     builder: VideoDetailDialog(), cornerRadius: 20,
     shadow: DefaultDialogShadow
   })
+  @Local HoldingHand: motion.HoldingHandStatus | null = null
   private listScroller: Scroller = new Scroller()
 
   @Builder
@@ -164,6 +176,15 @@ export struct PrivacySpace { // 隐私空间页
           await this.toMetaData(await SelectFileUtil.selectFromFileManager(undefined, "video"))
         })
       MenuItem({
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.picture_2')),
+        content: $r('app.string.import_from_album')
+      })
+        .onClick(async () => {
+          this.isPresent = false
+          await this.toMetaData(await SelectFileUtil.selectFromFileManager(undefined, "album"))
+        })
+
+      MenuItem({
         symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.music')),
         content: $r('app.string.import_from_music')
       })
@@ -197,6 +218,7 @@ export struct PrivacySpace { // 隐私空间页
           })
         }
       })
+
       if (!this.is_edit) {
         Button({ type: ButtonType.Circle, stateEffect: true }) {
           SymbolGlyph($r('sys.symbol.text_and_arrow_down'))
@@ -210,6 +232,8 @@ export struct PrivacySpace { // 隐私空间页
     }
     .width('95%')
     .justifyContent(FlexAlign.Start)
+    .reverse(IntellectualGripPostureUtil.isLeftHoldHand(this.HoldingHand))
+    .animation({ duration: 300, curve: Curve.Ease })
   }
 
   @Builder
@@ -330,6 +354,11 @@ export struct PrivacySpace { // 隐私空间页
     this.videoDataSource = new VideoDataSource(this.video_meta_data_encryption)
     PrivacySpaceUtil.setPrivacyMode(true)
     DlpAntiPeepUtil.checkDlpAntiPeepStatus()
+    const savedField = Preferences.getSortField(PathUtils.appContext!)
+    if (savedField === 'name' || savedField === 'datetime' || savedField === 'time') {
+      this.currentSortField = savedField
+    }
+    this.currentSortAsc = Preferences.getSortAsc(PathUtils.appContext!)
   }
 
   async clickItem(item: VideoMetadata | undefined, choosePlayer: string) {
@@ -396,74 +425,109 @@ export struct PrivacySpace { // 隐私空间页
           .justifyContent(FlexAlign.Center)
           .animation({ duration: 150, curve: Curve.Ease })
         } else {
-          List({ scroller: this.listScroller, space: 10 }) {
-            LazyForEach(this.videoDataSource, (item: VideoMetadata) => {
-              ListItem() {
-                if (Setting.listDisplayMode === ListDisplayMode.LIST_DISPLAY) {
-                  this.VideoItemBuilder(item)
-                } else {
-                  VideoCardItem({
-                    item: item,
-                    delMultipleList: this.delMultipleList
-                  })
-                    .width('95%')
-                    .backgroundColor(Setting.backgroundImageSrc.length > 0 ?
-                      $r('app.color.start_window_background_blur') :
-                      $r('app.color.start_window_background'))
-                    .borderRadius(16)
-                    .height('auto')
+          Stack({
+            alignContent: IntellectualGripPostureUtil.isLeftHoldHand(this.HoldingHand) ? Alignment.TopStart :
+              Alignment.TopEnd
+          }) {
+            List({ scroller: this.listScroller, space: 10 }) {
+              LazyForEach(this.videoDataSource, (item: VideoMetadata) => {
+                ListItem() {
+                  if (Setting.listDisplayMode === ListDisplayMode.LIST_DISPLAY) {
+                    this.VideoItemBuilder(item)
+                  } else {
+                    VideoCardItem({
+                      item: item,
+                      delMultipleList: this.delMultipleList
+                    })
+                      .width('95%')
+                      .backgroundColor(Setting.backgroundImageSrc.length > 0 ?
+                        $r('app.color.start_window_background_blur') :
+                        $r('app.color.start_window_background'))
+                      .borderRadius(16)
+                      .height('auto')
+                  }
                 }
+                .width('100%')
+                .height('auto')
+                .onClick(async () => {
+                  await this.clickItem(item, VideoOperateUtil.getPlayerNavigationAddress(Setting.defaultPlayerEngine))
+                })
+                .bindContextMenu(this.MenuBuilder(item), ResponseType.LongPress,
+                  {
+                    backgroundBlurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
+                    preview: VideoItemPreviewBuilder(item),
+                    previewAnimationOptions: { scale: [1.0, 0.95], hoverScale: [1.0, 1.2] },
+                    layoutRegionMargin: {
+                      left: 16,
+                      right: 16,
+                      top: 16,
+                      bottom: 4
+                    },
+                    hapticFeedbackMode: HapticFeedbackMode.ENABLED,
+                    mask: true
+                  })
+                .bindContextMenu(this.MenuBuilder(item), ResponseType.RightClick,
+                  {
+                    backgroundBlurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
+                    preview: VideoItemPreviewBuilder(item),
+                    previewAnimationOptions: { scale: [1.0, 0.95], hoverScale: [1.0, 1.2] },
+                    layoutRegionMargin: {
+                      left: 16,
+                      right: 16,
+                      top: 16,
+                      bottom: 4
+                    },
+                    mask: true
+                  })
+                .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+                .transition(TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.Sharp }))
+                .swipeAction({
+                  end: this.itemEnd(item),
+                  edgeEffect: SwipeEdgeEffect.Spring
+                })
+              }, (item: VideoMetadata) => item.date + item.title + item.last_play + item.size.toString() + item.time)
+            }
+            .clip(false)
+            .cachedCount(3)
+            .lanes(this.list_line)
+            .layoutWeight(1)
+            .padding({ left: 10, right: 10 })
+            .width('100%')
+            .height('100%')
+            .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true }) // 滚动边缘效果
+            .chainAnimation(true)
+            .scrollBar(BarState.Off)
+            .onScrollIndex((start: number, _end: number, _center: number) => {
+              if (this.currentSortField === 'name') {
+                this.updateIndexerOnScroll(start)
               }
-              .width('100%')
-              .height('auto')
-              .onClick(async () => {
-                await this.clickItem(item, VideoOperateUtil.getPlayerNavigationAddress(Setting.defaultPlayerEngine))
-              })
-              .bindContextMenu(this.MenuBuilder(item), ResponseType.LongPress,
-                {
-                  backgroundBlurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
-                  preview: VideoItemPreviewBuilder(item),
-                  previewAnimationOptions: { scale: [1.0, 0.95], hoverScale: [1.0, 1.2] },
-                  layoutRegionMargin: {
-                    left: 16,
-                    right: 16,
-                    top: 16,
-                    bottom: 4
-                  },
-                  hapticFeedbackMode: HapticFeedbackMode.ENABLED,
-                  mask: true
+            })
+
+            if (this.currentSortField === 'name' && this.activeAlphabet.length > 0) {
+              AlphabetIndexer({ arrayValue: this.activeAlphabet, selected: this.indexerSelected })
+                .onSelect((index: number) => {
+                  this.scrollToLetter(this.activeAlphabet[index])
                 })
-              .bindContextMenu(this.MenuBuilder(item), ResponseType.RightClick,
-                {
-                  backgroundBlurStyle: BlurStyle.COMPONENT_ULTRA_THIN,
-                  preview: VideoItemPreviewBuilder(item),
-                  previewAnimationOptions: { scale: [1.0, 0.95], hoverScale: [1.0, 1.2] },
-                  layoutRegionMargin: {
-                    left: 16,
-                    right: 16,
-                    top: 16,
-                    bottom: 4
-                  },
-                  mask: true
-                })
-              .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-              .transition(TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.Sharp }))
-              .swipeAction({
-                end: this.itemEnd(item),
-                edgeEffect: SwipeEdgeEffect.Spring
+                .color($r('app.color.text_color'))
+                .selectedColor($r('sys.color.white'))
+                .popupColor($r('app.color.main_color'))
+                .selectedBackgroundColor($r('app.color.main_color'))
+                .popupBackground($r('app.color.start_window_background'))
+                .itemSize(20)
+                .height('100%')
+                .margin(IntellectualGripPostureUtil.isLeftHoldHand(this.HoldingHand) ? { left: 2 } : { right: 2 })
+            }
+
+            if (this.currentSortField !== 'name') {
+              ScrollBarBuilder({
+                videoListController: this.listScroller,
+                fileFolderLength: 0
               })
-            }, (item: VideoMetadata) => item.date + item.title + item.last_play + item.size.toString() + item.time)
+            }
           }
-          .clip(false)
-          .cachedCount(3)
-          .lanes(this.list_line)
+          .animation({ duration: 300, curve: Curve.Ease })
           .layoutWeight(1)
-          .padding({ left: 10, right: 10 })
           .width('100%')
-          .height('100%')
-          .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true }) // 滚动边缘效果
-          .chainAnimation(true)
-          .scrollBar(BarState.Off)
         }
       }
       .width('100%')
@@ -477,6 +541,7 @@ export struct PrivacySpace { // 隐私空间页
       })
     }
     .onWillDisappear(() => {
+      IntellectualGripPostureUtil.destroyHoldingHandStatus()
       PrivacySpaceUtil.closePrivacyMode()
     })
     .onShown(() => {
@@ -585,12 +650,15 @@ export struct PrivacySpace { // 隐私空间页
       if (privacySpaceParams?.needGotoSetting) {
         this.isPresent = true
       }
+      IntellectualGripPostureUtil.createHoldingHandStatus((data: motion.HoldingHandStatus) => {
+        this.HoldingHand = data
+      })
     })
     .dynamicHideTitleBar({
       hideTitleArea: true,
       hideBottomBuilder: true,
       hideStatusBar: false,
-      mode: HideMode.SCROLL_UP_TO
+      mode: HideMode.SCROLL_UP
     })
     .hideBackButton(false)
   }
@@ -607,6 +675,65 @@ export struct PrivacySpace { // 隐私空间页
     }.padding({ left: 15, right: 15 }).justifyContent(FlexAlign.SpaceEvenly)
   }
 
+  @Monitor('video_meta_data_encryption', 'currentSortField', 'currentSortAsc')
+  onVideoListChanged() {
+    if (this.currentSortField === 'name') {
+      this.updateActiveAlphabet()
+    } else {
+      this.activeAlphabet = []
+    }
+  }
+
+  private getFirstLetter(title: string): string {
+    if (!title || title.length === 0) {
+      return '#'
+    }
+    const pinyin = pinyin4js.getShortPinyin(title) as string
+    if (pinyin.length === 0) {
+      return '#'
+    }
+    const first = pinyin[0].toUpperCase()
+    if (first >= 'A' && first <= 'Z') {
+      return first
+    }
+    return '#'
+  }
+
+  private updateActiveAlphabet(): void {
+    const list = this.videoDataSource.getAllData()
+    const letterSet = new Set<string>()
+    for (const item of list) {
+      letterSet.add(this.getFirstLetter(item.title || ''))
+    }
+    let alphabet = FULL_ALPHABET.filter(letter => letterSet.has(letter))
+    if (!this.currentSortAsc) {
+      alphabet = alphabet.reverse()
+    }
+    this.activeAlphabet = alphabet
+  }
+
+  private scrollToLetter(letter: string): void {
+    const list = this.videoDataSource.getAllData()
+    for (let i = 0; i < list.length; i++) {
+      if (this.getFirstLetter(list[i].title || '') === letter) {
+        this.listScroller.scrollToIndex(i)
+        return
+      }
+    }
+  }
+
+  private updateIndexerOnScroll(index: number): void {
+    const list = this.videoDataSource.getAllData()
+    if (index < 0 || index >= list.length) {
+      return
+    }
+    const letter = this.getFirstLetter(list[index].title || '')
+    const targetIndex = this.activeAlphabet.indexOf(letter)
+    if (targetIndex !== -1 && targetIndex !== this.indexerSelected) {
+      this.indexerSelected = targetIndex
+    }
+  }
+
   private handleSort(field: 'name' | 'time' | 'datetime', defaultAsc: boolean) {
     if (this.currentSortField === field) {
       this.currentSortAsc = !this.currentSortAsc
@@ -614,6 +741,8 @@ export struct PrivacySpace { // 隐私空间页
       this.currentSortField = field
       this.currentSortAsc = defaultAsc
     }
+    Preferences.saveSortField(PathUtils.appContext!, this.currentSortField)
+    Preferences.saveSortAsc(PathUtils.appContext!, this.currentSortAsc)
     ToolsUtil.sortBy(PathUtils.appContext!, this.allVideos, undefined, field, this.currentSortAsc)
     this.allVideos = Preferences.getVideoMetaDataEncryption(PathUtils.appContext!)
     this.applySearch()

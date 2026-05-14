@@ -1,9 +1,9 @@
-import { SettingsClickItem } from '../../component/SettingComponent/SettingsClickItem'
-import { SettingsToggleItem } from '../../component/SettingComponent/SettingsToggleItem'
-import { Setting } from '../../utils/ObservedUtil'
-import Preferences from '../../database/Preferences'
-import { PathUtils } from '../../utils/PathUtils'
 import NavigationAddress from '../../common/NavigationCommon'
+import Preferences from '../../database/Preferences'
+import { Setting } from '../../utils/ObservedUtil'
+import { PathUtils } from '../../utils/PathUtils'
+import { SettingsClickItem } from '../SettingComponent/SettingsClickItem'
+import { SettingsToggleItem } from '../SettingComponent/SettingsToggleItem'
 
 @ComponentV2
 export struct PrivacySpaceSettingComponent {

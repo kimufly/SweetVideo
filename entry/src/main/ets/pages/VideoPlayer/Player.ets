@@ -278,7 +278,9 @@ export struct Player { // 播放页
               this.player.onVerticalPanEnd()
             },
             onHorizonPanStart: () => {
-              this.player.onHorizonPanStart()
+              VideoOperateUtil.lastPlayTime = this.player.playTime
+              this.player.onSwiping = true
+              this.player.getFrameByTime(this.player.playTime, true)
             },
             onHorizonPanUpdate: (offsetX: number) => {
               this.player.onHorizonPanUpdate(offsetX)

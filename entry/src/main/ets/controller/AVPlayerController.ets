@@ -47,7 +47,8 @@ export class AVPlayerController extends BasePlayerController {
   @Trace volumeLoudnessGain: number = 0
   @Trace superResolutionState: boolean = false
   private lastFrameFetchTime: number = 0
-  private readonly FRAME_FETCH_INTERVAL: number = 200
+  private readonly FRAME_FETCH_INTERVAL: number = 200 // 200ms 获取一次预览帧
+  private lastFrameFetchPlayTime: number = -1 // 上次获取帧的播放时间，避免同时间重复获取导致闪烁
 
   constructor() {
     super('avplayer')
@@ -72,29 +73,31 @@ export class AVPlayerController extends BasePlayerController {
 
   async getFrameByTime(time: number, isFirstFrame: boolean) {
     if (Setting.showFrameImgStatus) {
-      // 时间间隔控制，避免频繁获取视频帧
       const now = Date.now()
       if (!isFirstFrame && now - this.lastFrameFetchTime < this.FRAME_FETCH_INTERVAL) {
-        return // 时间间隔太短，跳过
+        return
+      }
+      if (!isFirstFrame && Math.floor(time) === Math.floor(this.lastFrameFetchPlayTime)) {
+        return
       }
       this.lastFrameFetchTime = now
+      this.lastFrameFetchPlayTime = time
 
       const isUpdating = !VideoOperateUtil.updatePix
       const shouldSkip = isUpdating && !isFirstFrame
       if (shouldSkip) {
-        return // 非第一帧且正在更新时跳过，避免堆积
+        return
       }
-      VideoOperateUtil.updatePix = false // 加锁
+      VideoOperateUtil.updatePix = false
       try {
         const img = await VideoOperateUtil.fetchFrameByTime(time, this.nowPlaying?.size)
-        if (img) {
+        if (img && Math.abs(this.playTime - time) < 3000) {
           this.pixelMap = img
         }
       } catch (error) {
         ToolsUtil.addLogger('获取视频帧失败:' + error, true)
-        this.pixelMap = null
       } finally {
-        VideoOperateUtil.updatePix = true // 确保解锁
+        VideoOperateUtil.updatePix = true
       }
     }
   }

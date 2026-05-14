@@ -2,7 +2,7 @@ import { window } from '@kit.ArkUI'
 import { audio } from '@kit.AudioKit'
 import { BusinessError, settings } from '@kit.BasicServicesKit'
 import { media } from '@kit.MediaKit'
-import { VideoMetadata } from '../interfaces/VideoMetadataInterface'
+import { SaveOptions, VideoMetadata } from '../interfaces/VideoMetadataInterface'
 import { AudioTrack, SubtitleTrack } from '../interfaces/AudioTrackInterface'
 import { common } from '@kit.AbilityKit'
 import { PathUtils } from './PathUtils'
@@ -135,7 +135,7 @@ export default class VideoOperateUtil {
     ToolsUtil.showToast(ToolsUtil.getStringResource($r('app.string.video_error').id))
     const nowPlayItem = videoMetaData.find(item => item.date === date)
     // 更新当前播放时间，确保跳转到MPV时能从正确位置继续播放
-    if (nowPlayItem && currentTime !== undefined) {
+    if (nowPlayItem && currentTime !== undefined && currentTime > 0) {
       nowPlayItem.last_play = currentTime
     }
     const playerParams = new PlayerParams(nowPlayItem, videoMetaData, undefined)
@@ -158,117 +158,94 @@ export default class VideoOperateUtil {
     return Math.sqrt(dx * dx + dy * dy)
   }
 
-  static checkLocalX(localX: number | undefined | null) {
-    return typeof localX === 'number'
+  private static async getTracksByType<T>(avPlayer: media.AVPlayer, trackType: media.MediaType,
+    mapper: (desc: media.MediaDescription) => T, errorLabel: string): Promise<T[]> {
+    return new Promise((resolve, reject) => {
+      avPlayer.getTrackDescription((error: BusinessError, arrList: Array<media.MediaDescription>) => {
+        if (error || !arrList || arrList.length === 0) {
+          salmonLogger.addLog(TAG, `Failed to get TrackDescription, error: ${error}`, true)
+          return reject(error || new Error(`No ${errorLabel} available`))
+        }
+        const tracks: T[] = arrList
+          .filter(desc => desc[media.MediaDescriptionKey.MD_KEY_TRACK_TYPE] === trackType)
+          .map(mapper)
+        resolve(tracks)
+      })
+    })
   }
 
-  // 获取音轨
   static async getAudioTracks(avPlayer: media.AVPlayer): Promise<AudioTrack[]> {
-    const getTrackDescriptions = (): Promise<AudioTrack[]> => {
-      return new Promise((resolve, reject) => {
-        avPlayer.getTrackDescription((error: BusinessError, arrList: Array<media.MediaDescription>) => {
-          if (error || !arrList || arrList.length === 0) {
-            salmonLogger.addLog(TAG, `Failed to get TrackDescription, error: ${error}`, true)
-            return reject(error || new Error("No audio tracks available"))
-          }
-          const audioTracks: AudioTrack[] = arrList
-            .filter(description =>
-            description[media.MediaDescriptionKey.MD_KEY_TRACK_TYPE] === media.MediaType.MEDIA_TYPE_AUD
-            )
-            .map((description): AudioTrack => {
-              return {
-                index: description[media.MediaDescriptionKey.MD_KEY_TRACK_INDEX] as number,
-                language: description[media.MediaDescriptionKey.MD_KEY_LANGUAGE] as string,
-                name: description[media.MediaDescriptionKey.MD_KEY_TRACK_NAME] as string,
-                mime: description[media.MediaDescriptionKey.MD_KEY_CODEC_MIME] as string
-              }
-            })
-          resolve(audioTracks)
-        })
-      })
-    }
-
     try {
-      const audioTracks = await getTrackDescriptions()
-      return audioTracks // 返回包含音轨索引、语言和名称的对象数组
+      return await VideoOperateUtil.getTracksByType<AudioTrack>(avPlayer, media.MediaType.MEDIA_TYPE_AUD,
+        (desc): AudioTrack => ({
+          index: desc[media.MediaDescriptionKey.MD_KEY_TRACK_INDEX] as number,
+          language: desc[media.MediaDescriptionKey.MD_KEY_LANGUAGE] as string,
+          name: desc[media.MediaDescriptionKey.MD_KEY_TRACK_NAME] as string,
+          mime: desc[media.MediaDescriptionKey.MD_KEY_CODEC_MIME] as string
+        }), 'audioTracks')
     } catch (error) {
       salmonLogger.addLog(TAG, `获取 audioTracks 失败: ${error}`, true)
       ToolsUtil.showToast('获取音轨失败')
-      return [] // 返回空数组表示没有获取到音轨
+      return []
     }
   }
 
-  // 获取字幕
   static async getInnerSubtitles(avPlayer: media.AVPlayer | undefined | null): Promise<SubtitleTrack[]> {
     if (!avPlayer) {
       return []
     }
-    const getTrackDescriptions = (): Promise<SubtitleTrack[]> => {
-      return new Promise((resolve, reject) => {
-        avPlayer.getTrackDescription((error: BusinessError, arrList: Array<media.MediaDescription>) => {
-          if (error || !arrList || arrList.length === 0) {
-            salmonLogger.addLog(TAG, `Failed to get TrackDescription, error: ${error}`, true)
-            return reject(error || new Error("No subtitleTracks available"))
-          }
-          const subtitleTracks: SubtitleTrack[] = arrList
-            .filter(description =>
-            description[media.MediaDescriptionKey.MD_KEY_TRACK_TYPE] === media.MediaType.MEDIA_TYPE_SUBTITLE
-            )
-            .map((description): SubtitleTrack => {
-              return {
-                id: description[media.MediaDescriptionKey.MD_KEY_TRACK_INDEX] as number,
-                lang: description[media.MediaDescriptionKey.MD_KEY_LANGUAGE] as string,
-                title: description[media.MediaDescriptionKey.MD_KEY_TRACK_NAME] as string
-              }
-            })
-          resolve(subtitleTracks)
-        })
-      })
-    }
-
     try {
-      const subtitleTracks = await getTrackDescriptions()
-      return subtitleTracks // 返回包含字幕索引、语言和名称的对象数组
+      return await VideoOperateUtil.getTracksByType<SubtitleTrack>(avPlayer, media.MediaType.MEDIA_TYPE_SUBTITLE,
+        (desc): SubtitleTrack => ({
+          id: desc[media.MediaDescriptionKey.MD_KEY_TRACK_INDEX] as number,
+          lang: desc[media.MediaDescriptionKey.MD_KEY_LANGUAGE] as string,
+          title: desc[media.MediaDescriptionKey.MD_KEY_TRACK_NAME] as string
+        }), 'subtitleTracks')
     } catch (error) {
       salmonLogger.addLog(TAG, "获取 subtitleTracks 失败: " + error, true)
-      return [] // 返回空数组表示没有获取到音轨
+      return []
     }
   }
 
   // 保存视频播放进度
-  // ORM 改造：saveVideoTime 仅负责保存播放进度，最近播放记录的添加由 playChooseVideo 统一处理，
-  // 避免 saveVideoTime 在 onWillDisappear/completed 等多处被调用时重复添加最近播放记录。
+  static async saveVideoProperty(context: Context, nowPlaying: VideoMetadata, options: SaveOptions) {
+    await SelectFileUtil.saveData(context, nowPlaying!, options)
+  }
+
   static async saveVideoTime(play_time: number, nowPlaying: VideoMetadata,
     videoMetaData: VideoMetadata[], context: Context): Promise<void> {
-    // 保存文件数据
-    await SelectFileUtil.saveData(context, nowPlaying!, { playTime: play_time })
+    await VideoOperateUtil.saveVideoProperty(context, nowPlaying, { playTime: play_time })
+    if (Setting.recentPlay && !PrivacySpaceUtil.getPrivacyMode() &&
+      !SelectFileUtil.isPathFromSource(nowPlaying.uri, VideoSource.PRIVACY_SPACE)) {
+      const meta = videoMetaData.find(i => i.date == nowPlaying?.date)
+      if (meta) {
+        RecentPlayUtil.addPlayback(context, meta)
+      }
+    }
   }
 
-  // 保存视频片头时间
   static async saveVideoStartTime(startTime: number, nowPlaying: VideoMetadata, context: Context): Promise<void> {
-    await SelectFileUtil.saveData(context, nowPlaying, { startTime: startTime })
+    await VideoOperateUtil.saveVideoProperty(context, nowPlaying, { startTime: startTime })
   }
 
-  // 保存视频片尾时间
   static async saveVideoEndTime(endTime: number, nowPlaying: VideoMetadata, context: Context): Promise<void> {
-    await SelectFileUtil.saveData(context, nowPlaying, { endTime: endTime })
+    await VideoOperateUtil.saveVideoProperty(context, nowPlaying, { endTime: endTime })
   }
 
-  // 保存音视频宽高信息
   static async saveVideoWeightAndHeight(context: Context, nowPlaying: VideoMetadata): Promise<void> {
-    await SelectFileUtil.saveData(context, nowPlaying!, { size: nowPlaying.size })
+    await VideoOperateUtil.saveVideoProperty(context, nowPlaying, { size: nowPlaying.size })
   }
 
   static async saveVideoTotalTime(context: Context, nowPlaying: VideoMetadata): Promise<void> {
-    await SelectFileUtil.saveData(context, nowPlaying!, { totalTime: nowPlaying.time })
+    await VideoOperateUtil.saveVideoProperty(context, nowPlaying, { totalTime: nowPlaying.time })
   }
 
   static async saveVideoPointA(context: Context, nowPlaying: VideoMetadata, pointA?: number): Promise<void> {
-    await SelectFileUtil.saveData(context, nowPlaying!, { pointA: pointA })
+    await VideoOperateUtil.saveVideoProperty(context, nowPlaying, { pointA: pointA })
   }
 
   static async saveVideoPointB(context: Context, nowPlaying: VideoMetadata, pointB?: number): Promise<void> {
-    await SelectFileUtil.saveData(context, nowPlaying!, { pointB: pointB })
+    await VideoOperateUtil.saveVideoProperty(context, nowPlaying, { pointB: pointB })
   }
 
   static saveLastPlayVideoIndex(list: VideoMetadata[], date: string | undefined) {
@@ -542,23 +519,8 @@ export default class VideoOperateUtil {
   }
 
   private static calculateFrameSize(videoWidth: number, videoHeight: number): FrameSize {
-    const maxSize = 200
-    const aspectRatio = videoWidth / videoHeight
-
-    if (aspectRatio >= 1) {
-      // 宽屏或正方形
-      const result: FrameSize = {
-        width: maxSize,
-        height: Math.round(maxSize / aspectRatio)
-      }
-      return result
-    } else {
-      // 竖屏
-      const result: FrameSize = {
-        width: Math.round(maxSize * aspectRatio),
-        height: maxSize
-      }
-      return result
-    }
+    const size = VideoInfoUtil.calculateAspectRatioSize(videoWidth, videoHeight, 200)
+    const result: FrameSize = { width: size.width, height: size.height }
+    return result
   }
 }
